@@ -1,0 +1,30 @@
+<div id="page-insights" class="page">
+  <div class="page-header">
+    <button class="back-btn" onclick="showPage('home')">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span class="page-title">Insights</span>
+  </div>
+
+  <div class="insights-body">
+
+    <section class="insights-section">
+      <h3 class="insights-heading">Emotion Heatmap</h3>
+      <p class="insights-sub">Color shows mood (warm = positive, cool = negative). Opacity shows intensity.</p>
+      <div id="heatmap-wrap"></div>
+    </section>
+
+    <section class="insights-section">
+      <h3 class="insights-heading">Emotion Breakdown</h3>
+      <p class="insights-sub">Which emotional categories show up most.</p>
+      <div id="categories-wrap"></div>
+    </section>
+
+    <section class="insights-section">
+      <h3 class="insights-heading">Your Most Common Feelings</h3>
+      <p class="insights-sub">Specific emotions from all tagged entries.</p>
+      <div id="tags-wrap"></div>
+    </section>
+
+  </div>
+</div>

@@ -1,0 +1,20 @@
+<div id="page-history" class="page" style="overflow:hidden;">
+  <div class="page-header">
+    <span class="page-title">History</span>
+  </div>
+
+  <div class="view-toggle">
+    <button class="toggle-btn active" id="btn-timeline" onclick="switchView('timeline')">Timeline</button>
+    <button class="toggle-btn" id="btn-calendar" onclick="switchView('calendar')">Calendar</button>
+  </div>
+
+  <div id="view-timeline" style="flex:1; overflow-y:auto; display:flex; flex-direction:column; gap:.75rem;">
+    <div id="timeline" style="display:flex; flex-direction:column; gap:.75rem;"></div>
+  </div>
+
+  <div id="view-calendar" style="display:none; flex-direction:column; flex:1; overflow:hidden; gap:.75rem;">
+    <div style="font-size:var(--text-sm); font-weight:600; text-align:center; color:var(--ink-mid);" id="cal-month-label"></div>
+    <div id="calendar-grid"></div>
+    <div id="cal-day-entries" style="overflow-y:auto; flex:1;"></div>
+  </div>
+</div>

@@ -1,0 +1,22 @@
+<div id="page-journal" class="page">
+  <div class="page-header">
+    <button class="back-btn" onclick="showPage('home')">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span class="page-title">Journal down</span>
+  </div>
+
+  <div class="journal-date" id="journal-date"></div>
+
+  <textarea id="journal-textarea" placeholder="Write how you feel… no one will respond, this is just for you." maxlength="8000"></textarea>
+
+  <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
+    <button class="save-btn" id="journal-save" onclick="saveJournal()">Save</button>
+    <button class="rec-btn has-label" id="journal-rec-btn" onclick="toggleRecording('journal')" title="Voice input">
+      <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v4M8 23h8"/></svg>
+      <span>Voice</span>
+    </button>
+    <span class="status-bar" id="journal-rec-status"></span>
+    <span class="status-bar" id="journal-status" style="margin-left:auto;"></span>
+  </div>
+</div>

@@ -1,0 +1,20 @@
+<div id="page-reflect" class="page">
+  <div class="page-header">
+    <button class="back-btn" onclick="showPage('home')">
+      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
+    </button>
+    <span class="page-title">Reflect</span>
+  </div>
+
+  <div class="reflect-intro">
+    <p>Ask something about your past entries — how you've been feeling, patterns you've noticed, or moments you want to revisit.</p>
+  </div>
+
+  <div id="reflect-log"></div>
+
+  <div class="status-bar" id="reflect-status"></div>
+  <div class="input-wrap">
+    <textarea id="reflect-input" class="msg-input" rows="1" placeholder="Why have I been feeling tired lately…" maxlength="2000"></textarea>
+    <button id="reflect-send" class="send-btn" onclick="sendReflect()">Ask</button>
+  </div>
+</div>
