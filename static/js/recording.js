@@ -2,7 +2,7 @@
 
 let mediaRecorder = null;
 let audioChunks = [];
-let recordingTarget = null; // 'chat' | 'journal'
+let recordingTarget = null; // 'chat' | 'journal' | 'reflect'
 
 async function toggleRecording(target) {
   if (mediaRecorder && mediaRecorder.state === 'recording') {
@@ -39,6 +39,10 @@ async function toggleRecording(target) {
       // Hand blob to chat.js — actual sending happens when user taps Send
       setChatAudioBlob(blob);
       setRecStatus(target, '');
+    } else if (target === 'reflect') {
+      // Hand blob to reflect.js — actual sending happens when user taps Send
+      setReflectAudioBlob(blob);
+      setRecStatus(target, '');
     } else {
       // Journal: save raw audio; background job will transcribe + summarise tone
       setRecStatus(target, 'Saving…');
@@ -66,8 +70,10 @@ function setRecBtn(target, recording) {
 }
 
 function setRecStatus(target, msg, error = false) {
-  const id = target === 'journal' ? 'journal-rec-status' : 'chat-status';
+  const idMap = { journal: 'journal-rec-status', reflect: 'reflect-chat-status' };
+  const id = idMap[target] || 'chat-status';
   const el = document.getElementById(id);
+  if (!el) return;
   el.textContent = msg;
   el.className = 'status-bar' + (error ? ' error' : '');
 }

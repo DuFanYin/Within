@@ -28,7 +28,11 @@ from .db import (
     get_session_messages, get_history, get_days_needing_summary, get_day_chat_messages,
     save_summary, get_corpus_entries, get_stats,
 )
-from .gemma_cactus import chat_stream_sync, extract_emotion_sync, summarize_sync, warmup_sync, export_corpus_incremental, _corpus_cursor, tone_summary_sync, image_caption_sync, reflect_open_sync, reflect_agent_sync
+from .corpus import export_corpus_incremental, _corpus_cursor
+from .chat import chat_stream_sync
+from .emotion import extract_emotion_sync, summarize_sync, tone_summary_sync, image_caption_sync
+from .reflect import reflect_open_sync, reflect_agent_sync
+from .engine import warmup_sync
 from .transcribe import transcribe_bytes_sync
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -58,9 +62,9 @@ def _to_pcm_int16(audio_bytes: bytes, suffix: str = ".webm") -> bytes:
         result = subprocess.run(
             [
                 ffmpeg, "-y", "-i", src_path,
-                "-ar", "16000",   # 16 kHz sample rate (Gemma 4 audio encoder)
-                "-ac", "1",       # mono
-                "-f", "s16le",    # signed 16-bit little-endian PCM
+                "-ar", "16000",
+                "-ac", "1",
+                "-f", "s16le",
                 dst_path,
             ],
             capture_output=True,
@@ -72,6 +76,14 @@ def _to_pcm_int16(audio_bytes: bytes, suffix: str = ".webm") -> bytes:
     finally:
         Path(src_path).unlink(missing_ok=True)
         Path(dst_path).unlink(missing_ok=True)
+
+
+def _drain_chat_tokens(
+    token_q: "queue.Queue[str | None]",
+    future,
+) -> tuple[list[str], "asyncio.Future"]:
+    """Helper type alias — actual draining is inline in each generator."""
+    pass  # not used; kept for documentation
 
 
 app = FastAPI(title="Within")
@@ -95,14 +107,14 @@ async def _warmup() -> None:
     try:
         await asyncio.to_thread(warmup_sync)
     except Exception:
-        pass  # warmup failure is non-fatal; model loads on first real request
+        pass
 
 
 async def _sync_corpus() -> None:
     """Export any new journal entries to corpus/ so RAG index is fresh."""
     try:
-        import app.gemma_cactus as gc
-        entries = await asyncio.to_thread(get_corpus_entries, gc._corpus_cursor)
+        import app.corpus as _corpus
+        entries = await asyncio.to_thread(get_corpus_entries, _corpus._corpus_cursor)
         if entries:
             await asyncio.to_thread(export_corpus_incremental, entries)
     except Exception:
@@ -110,11 +122,7 @@ async def _sync_corpus() -> None:
 
 
 async def _archiver_loop() -> None:
-    """
-    Every 5 minutes: find past days that have chat messages but no summary,
-    generate a summary for each, and save it. Runs concurrently with chat.
-    """
-    CHECK_INTERVAL = 300  # seconds
+    CHECK_INTERVAL = 300
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
         try:
@@ -126,12 +134,7 @@ async def _archiver_loop() -> None:
 
 
 async def _audio_processor_loop() -> None:
-    """
-    Every 2 minutes: find voice entries without a transcript yet,
-    run ASR + tone summary in background, write back to audio_files,
-    then sync to corpus so RAG sees the new text.
-    """
-    CHECK_INTERVAL = 120  # seconds
+    CHECK_INTERVAL = 120
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
         try:
@@ -143,10 +146,6 @@ async def _audio_processor_loop() -> None:
 
 
 async def _image_processor_loop() -> None:
-    """
-    Every 2 minutes: find image entries without a caption, run image_caption_sync,
-    write back to image_files, then re-sync corpus.
-    """
     CHECK_INTERVAL = 120
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
@@ -159,7 +158,6 @@ async def _image_processor_loop() -> None:
 
 
 async def _process_image_entry(item: dict) -> None:
-    """Run image_caption_sync for one image entry and write back the result."""
     image_path = IMAGE_DIR / item["filename"]
     if not image_path.is_file():
         return
@@ -176,11 +174,6 @@ async def _process_image_entry(item: dict) -> None:
 
 
 async def _process_audio_entry(item: dict) -> None:
-    """
-    Run ASR + tone summary for one voice entry and write back results.
-    Also backfills entry content and triggers emotion tagging so voice
-    entries get mood_snapshots like text entries do.
-    """
     audio_path = AUDIO_DIR / item["filename"]
     if not audio_path.is_file():
         return
@@ -192,11 +185,8 @@ async def _process_audio_entry(item: dict) -> None:
             return
         tone = await asyncio.to_thread(tone_summary_sync, transcript)
         await asyncio.to_thread(update_audio_transcript, item["audio_id"], transcript, tone)
-        # Backfill entry content so history page shows the transcript text
         await asyncio.to_thread(update_entry_content, item["entry_id"], transcript)
-        # Emotion-tag the entry now that we have text
         asyncio.create_task(_tag_entry(item["entry_id"], transcript))
-        # Re-sync corpus so RAG picks up the new voice text
         asyncio.create_task(_sync_corpus())
     except Exception:
         pass
@@ -233,12 +223,23 @@ async def warmup_endpoint() -> dict:
 class ChatBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=8000)
     session_id: str | None = None
-    source: str = "text"  # "text" | "voice"
+    source: str = "text"
 
 
 class JournalBody(BaseModel):
     text: str = Field(..., min_length=1, max_length=8000)
     source: str = "text"
+
+
+# ── SSE helpers ───────────────────────────────────────────────────────────────
+
+async def _stream_chat_sse(
+    token_q: "queue.Queue[str | None]",
+    future,
+) -> tuple[list[str], dict]:
+    """Drain token_q into a list; return (parts, meta_result). Not a generator — called inline."""
+    # This is a placeholder for documentation; actual draining is inlined below.
+    pass
 
 
 # ── /api/chat/stream ──────────────────────────────────────────────────────────
@@ -248,51 +249,36 @@ async def chat_stream(body: ChatBody) -> StreamingResponse:
     """
     SSE endpoint: yields tokens as `data: <json>\n\n` lines.
     Final event: `data: {"done": true, "session_id": "...", "meta": {...}}\n\n`
-    Error event: `data: {"error": "..."}\n\n`
     """
     session_id = body.session_id or str(uuid.uuid4())
     history = await asyncio.to_thread(get_session_messages, session_id)
-
     token_q: queue.Queue[str | None] = queue.Queue()
 
     async def generate():
-        # Run blocking FFI call in thread; tokens land in token_q via callback
         loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(
-            None, chat_stream_sync, body.text, history, token_q
-        )
-
-        full_reply_parts: list[str] = []
-
-        # Drain the queue until sentinel (None) arrives
+        future = loop.run_in_executor(None, chat_stream_sync, body.text, history, token_q)
+        full_parts: list[str] = []
         while True:
             try:
                 token = token_q.get(timeout=0.05)
             except queue.Empty:
-                # Yield control so the event loop can do other work
                 await asyncio.sleep(0)
                 continue
-
             if token is None:
                 break
-            full_reply_parts.append(token)
+            full_parts.append(token)
             yield f"data: {json.dumps({'token': token})}\n\n"
 
-        # Await the thread to get meta + check for errors
         meta_result = await future
-        full_reply = "".join(full_reply_parts)
-
+        full_reply = "".join(full_parts)
         if meta_result.get("error"):
             yield f"data: {json.dumps({'error': meta_result['error']})}\n\n"
             return
 
-        # Persist to DB and kick off emotion tagging
         user_id = await asyncio.to_thread(
             save_entry, "chat", "user", body.text, body.source, session_id
         )
-        await asyncio.to_thread(
-            save_entry, "chat", "assistant", full_reply, "text", session_id
-        )
+        await asyncio.to_thread(save_entry, "chat", "assistant", full_reply, "text", session_id)
         asyncio.create_task(_tag_entry(user_id, body.text))
 
         done_payload: dict = {"done": True, "session_id": session_id}
@@ -303,10 +289,7 @@ async def chat_stream(body: ChatBody) -> StreamingResponse:
     return StreamingResponse(
         generate(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "X-Accel-Buffering": "no",  # disable nginx buffering if behind proxy
-        },
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
@@ -324,11 +307,6 @@ async def journal(body: JournalBody) -> dict:
 
 @app.get("/api/reflect/open")
 async def reflect_open() -> StreamingResponse:
-    """
-    SSE stream for the Reflect opening sequence.
-    Emits step events while working, then a single `result` event with
-    { greeting, topics }.
-    """
     def _step(msg: str) -> str:
         return f"data: {json.dumps({'step': msg})}\n\n"
 
@@ -375,33 +353,71 @@ class ReflectChatBody(BaseModel):
     topic_label: str = Field(..., min_length=1, max_length=200)
     topic_question: str = Field(default="", max_length=300)
     rag_query: str = Field(default="", max_length=200)
+    topic_type: str = Field(default="pattern")
     history: list[dict] = Field(default_factory=list)
     user_message: str = Field(..., min_length=1, max_length=2000)
+    session_id: str | None = None
 
 
 @app.post("/api/reflect/chat")
 async def reflect_chat(body: ReflectChatBody) -> StreamingResponse:
     """
-    One agentic reflect conversation turn.
-    Appends user_message to history, runs reflect_agent_sync (RAG + LLM),
-    streams tokens as SSE, ends with {done, reply} so the client can
-    append the assistant turn to its local history for the next call.
+    One reflect conversation turn.
+    - topic_type='just_chat': delegates to chat_stream_sync (session continuity, saved as mode='chat').
+    - all other types: reflect_agent_sync (RAG-grounded, saved as mode='reflect').
     """
-    history = body.history + [{"role": "user", "content": body.user_message}]
     token_q: queue.Queue[str | None] = queue.Queue()
 
-    async def generate():
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(
-            None,
-            reflect_agent_sync,
-            body.topic_label,
-            body.topic_question,
-            body.rag_query,
-            history,
-            token_q,
+    if body.topic_type == "just_chat":
+        session_id = body.session_id or str(uuid.uuid4())
+        history = await asyncio.to_thread(get_session_messages, session_id)
+
+        async def generate_chat():
+            loop = asyncio.get_event_loop()
+            future = loop.run_in_executor(None, chat_stream_sync, body.user_message, history, token_q)
+            full_parts: list[str] = []
+            while True:
+                try:
+                    token = token_q.get(timeout=0.05)
+                except queue.Empty:
+                    await asyncio.sleep(0)
+                    continue
+                if token is None:
+                    break
+                full_parts.append(token)
+                yield f"data: {json.dumps({'token': token})}\n\n"
+
+            meta_result = await future
+            full_reply = "".join(full_parts)
+            if meta_result.get("error"):
+                yield f"data: {json.dumps({'error': meta_result['error']})}\n\n"
+                return
+
+            user_id = await asyncio.to_thread(
+                save_entry, "chat", "user", body.user_message, "text", session_id
+            )
+            await asyncio.to_thread(save_entry, "chat", "assistant", full_reply, "text", session_id)
+            asyncio.create_task(_tag_entry(user_id, body.user_message))
+
+            done_payload: dict = {"done": True, "session_id": session_id, "reply": full_reply}
+            if meta_result.get("meta"):
+                done_payload["meta"] = meta_result["meta"]
+            yield f"data: {json.dumps(done_payload)}\n\n"
+
+        return StreamingResponse(
+            generate_chat(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
 
+    history = body.history + [{"role": "user", "content": body.user_message}]
+
+    async def generate_reflect():
+        loop = asyncio.get_event_loop()
+        future = loop.run_in_executor(
+            None, reflect_agent_sync,
+            body.topic_label, body.topic_question, body.rag_query, history, token_q,
+        )
         full_parts: list[str] = []
         while True:
             try:
@@ -411,7 +427,6 @@ async def reflect_chat(body: ReflectChatBody) -> StreamingResponse:
                 continue
             if token is None:
                 break
-            # Detect tool-call sentinels: "\x00TOOL:<label>\x00"
             if token.startswith("\x00TOOL:") and token.endswith("\x00"):
                 label = token[6:-1]
                 yield f"data: {json.dumps({'tool_call': label})}\n\n"
@@ -426,43 +441,59 @@ async def reflect_chat(body: ReflectChatBody) -> StreamingResponse:
             return
 
         reply = "".join(full_parts) or result.get("reply", "")
-        # Save as mode='reflect' so get_last_reflect_summary can find it
         asyncio.create_task(asyncio.to_thread(
             save_entry, "reflect", "user", body.user_message, "text", None
         ))
         yield f"data: {json.dumps({'done': True, 'reply': reply})}\n\n"
 
     return StreamingResponse(
-        generate(),
+        generate_reflect(),
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 
-# ── /api/voice ────────────────────────────────────────────────────────────────
+# ── /api/reflect/voice ────────────────────────────────────────────────────────
+
+@app.post("/api/reflect/voice")
+async def reflect_voice(
+    file: UploadFile = File(...),
+    session_id: str | None = None,
+    topic_type: str = "just_chat",
+) -> StreamingResponse:
+    """Voice input for the Reflect page (just_chat mode). Delegates to _voice_chat_stream."""
+    return await _voice_chat_stream(file, session_id, mode="chat")
+
+
+# ── /api/voice/stream ─────────────────────────────────────────────────────────
 
 @app.post("/api/voice/stream")
 async def voice_stream(
     file: UploadFile = File(...),
     session_id: str | None = None,
 ) -> StreamingResponse:
+    """Multimodal voice chat (Gemma 4 native audio). Streams reply as SSE."""
+    return await _voice_chat_stream(file, session_id, mode="chat")
+
+
+async def _voice_chat_stream(
+    file: UploadFile,
+    session_id: str | None,
+    mode: str = "chat",
+) -> StreamingResponse:
     """
-    Multimodal voice chat (Gemma 4 native audio).
-    Converts uploaded audio → PCM int16 → passes directly to cactus_complete.
-    Streams the reply as SSE, same format as /api/chat/stream.
-    Also saves the raw audio file and journal entry for history/RAG.
+    Shared implementation for voice SSE endpoints.
+    Converts audio → PCM, saves file, streams reply tokens, persists entries.
     """
     audio = await file.read()
     orig_name = file.filename or "audio.webm"
     suffix = "." + orig_name.rsplit(".", 1)[-1]
 
-    # Convert to PCM int16 for Gemma 4 audio encoder
     try:
         pcm_data = await asyncio.to_thread(_to_pcm_int16, audio, suffix)
     except RuntimeError as e:
         raise HTTPException(status_code=503, detail=str(e))
 
-    # Save raw audio for history / background tone summary
     unique_name = f"{uuid.uuid4().hex}{suffix}"
     dest = AUDIO_DIR / unique_name
     dest.write_bytes(audio)
@@ -474,11 +505,8 @@ async def voice_stream(
 
     async def generate():
         loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(
-            None, chat_stream_sync, "", history, token_q, pcm_data
-        )
-
-        full_reply_parts: list[str] = []
+        future = loop.run_in_executor(None, chat_stream_sync, "", history, token_q, pcm_data)
+        full_parts: list[str] = []
         while True:
             try:
                 token = token_q.get(timeout=0.05)
@@ -487,26 +515,20 @@ async def voice_stream(
                 continue
             if token is None:
                 break
-            full_reply_parts.append(token)
+            full_parts.append(token)
             yield f"data: {json.dumps({'token': token})}\n\n"
 
         meta_result = await future
-        full_reply = "".join(full_reply_parts)
-
+        full_reply = "".join(full_parts)
         if meta_result.get("error"):
             yield f"data: {json.dumps({'error': meta_result['error']})}\n\n"
             return
 
-        # Persist voice entry (content empty; background loop fills transcript later)
-        user_id = await asyncio.to_thread(
-            save_entry, "chat", "user", "", "voice", sid, audio_id
-        )
-        await asyncio.to_thread(
-            save_entry, "chat", "assistant", full_reply, "text", sid
-        )
+        await asyncio.to_thread(save_entry, mode, "user", "", "voice", sid, audio_id)
+        await asyncio.to_thread(save_entry, mode, "assistant", full_reply, "text", sid)
         asyncio.create_task(_sync_corpus())
 
-        done_payload: dict = {"done": True, "session_id": sid}
+        done_payload: dict = {"done": True, "session_id": sid, "reply": full_reply}
         if meta_result.get("meta"):
             done_payload["meta"] = meta_result["meta"]
         yield f"data: {json.dumps(done_payload)}\n\n"
@@ -527,13 +549,6 @@ async def upload_image(
     mode: str = "journal",
     session_id: str | None = None,
 ) -> dict:
-    """
-    2.3: Save an image as an emotional anchor (journal or chat).
-    - Validates MIME type and size.
-    - Saves file to data/images/.
-    - Creates journal_entry with source='image'; content = optional note text.
-    - Background _image_processor_loop will generate a caption for RAG.
-    """
     mime = file.content_type or "application/octet-stream"
     if mime not in _ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=415, detail=f"Unsupported image type: {mime}")
@@ -547,9 +562,7 @@ async def upload_image(
     dest = IMAGE_DIR / unique_name
     dest.write_bytes(image_bytes)
 
-    image_id = await asyncio.to_thread(
-        save_image_file, unique_name, mime, len(image_bytes)
-    )
+    image_id = await asyncio.to_thread(save_image_file, unique_name, mime, len(image_bytes))
     entry_id = await asyncio.to_thread(
         save_entry, mode, "user", note.strip(), "image", session_id, None, image_id
     )
@@ -581,7 +594,7 @@ async def get_image_file(image_id: int) -> StreamingResponse:
     return StreamingResponse(_iter(), media_type=row["mime_type"])
 
 
-# ── /api/voice ────────────────────────────────────────────────────────────────
+# ── /api/voice (save only) ────────────────────────────────────────────────────
 
 @app.post("/api/voice")
 async def voice(
@@ -589,10 +602,7 @@ async def voice(
     mode: str = "journal",
     session_id: str | None = None,
 ) -> dict:
-    """
-    Save a voice message as raw audio for journal entries.
-    Background _audio_processor_loop will run ASR + tone summary and write to corpus.
-    """
+    """Save a voice message as raw audio. Background loop will run ASR + tone summary."""
     audio = await file.read()
     orig_name = file.filename or "audio.webm"
     suffix = "." + orig_name.rsplit(".", 1)[-1]

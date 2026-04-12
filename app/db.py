@@ -368,17 +368,31 @@ def save_summary(day: str, summary_text: str) -> int:
 def get_history(view: str = "timeline", day: str | None = None) -> list[dict[str, Any]]:
     """
     view='timeline': all user entries newest-first, with mood tags.
-    view='calendar': group counts by date.
+    view='calendar': per-day total count plus category breakdown for the calendar mosaic.
     day='YYYY-MM-DD': entries for that day only.
     """
     with _conn() as c:
         if view == "calendar":
             rows = c.execute("""
-                SELECT substr(created_at,1,10) as day, COUNT(*) as count
-                FROM journal_entries WHERE role='user'
-                GROUP BY day ORDER BY day DESC
+                SELECT substr(e.created_at, 1, 10) AS day,
+                       COALESCE(NULLIF(TRIM(m.category), ''), '_none') AS category,
+                       COUNT(*) AS cnt
+                FROM journal_entries e
+                LEFT JOIN mood_snapshots m ON m.entry_id = e.id
+                WHERE e.role = 'user'
+                GROUP BY day, category
+                ORDER BY day ASC
             """).fetchall()
-            return [dict(r) for r in rows]
+            by_day: dict[str, dict[str, Any]] = {}
+            for r in rows:
+                day = r["day"]
+                cat = r["category"]
+                cnt = int(r["cnt"])
+                if day not in by_day:
+                    by_day[day] = {"day": day, "count": 0, "categories": {}}
+                by_day[day]["categories"][cat] = cnt
+                by_day[day]["count"] += cnt
+            return sorted(by_day.values(), key=lambda x: x["day"], reverse=True)
 
         query = """
             SELECT e.id, e.created_at, e.mode, e.content, e.source, e.audio_id, e.image_id,

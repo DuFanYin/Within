@@ -15,7 +15,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .gemma_cactus import _load_cactus, _resolve_weights
+from .engine import _load_cactus, _resolve_weights
 
 _asr_lock = threading.Lock()
 _asr_model: int | None = None

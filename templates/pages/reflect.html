@@ -3,13 +3,27 @@
     <button class="back-btn" onclick="showPage('home')">
       <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
     </button>
-    <span class="page-title">Reflect</span>
+    <span class="page-title">Talk</span>
+    <button id="reflect-new-btn" onclick="restartReflect()" style="margin-left:auto; background:none; border:1px solid var(--border); border-radius:var(--radius-sm); padding:.3rem .7rem; font-size:var(--text-xs); cursor:pointer; color:var(--ink-mid); font-family:var(--font-ui); transition:border-color .15s;" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border)'">New</button>
   </div>
 
   <div id="reflect-chat-log" class="reflect-chat-log"></div>
 
+  <!-- image preview -->
+  <div id="reflect-img-preview" class="img-preview">
+    <img id="reflect-img-thumb" alt="">
+    <button class="img-preview-close" onclick="clearReflectImage()">×</button>
+  </div>
+  <input type="file" id="reflect-img-input" accept="image/*" style="display:none" onchange="onReflectImagePicked(this)">
+
   <div class="status-bar" id="reflect-chat-status"></div>
-  <div class="input-wrap" id="reflect-input-wrap">
+  <div class="input-wrap hidden" id="reflect-input-wrap">
+    <button class="rec-btn" id="reflect-rec-btn" onclick="toggleRecording('reflect')" title="Voice input">
+      <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v4M8 23h8"/></svg>
+    </button>
+    <button class="rec-btn" id="reflect-img-btn" onclick="document.getElementById('reflect-img-input').click()" title="Attach photo">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+    </button>
     <textarea id="reflect-chat-input" class="msg-input" rows="1"
       placeholder="Share your thoughts…" maxlength="2000"></textarea>
     <button id="reflect-chat-send" class="send-btn" onclick="sendReflectChat()">Send</button>
