@@ -83,7 +83,7 @@ function appendImageBubble(src, caption) {
   const row = document.createElement('div');
   row.className = 'bubble-row bubble-row-user';
   const bubble = document.createElement('div');
-  bubble.className = 'bubble bubble-user bubble-image';
+  bubble.className = 'bubble bubble-user';
   const img = document.createElement('img');
   img.src = src;
   img.style.cssText = 'max-width:100%; max-height:12rem; border-radius:var(--radius-xs); display:block; object-fit:cover;';

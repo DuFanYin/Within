@@ -187,6 +187,36 @@ def save_mood(
 
 # ── reads ─────────────────────────────────────────────────────────────────────
 
+def get_recent_mood(days: int = 14) -> list[dict[str, Any]]:
+    """
+    Return one row per mood_snapshot in the last N days, newest first.
+    Each row: { day, valence, intensity, category, sub_tags (list) }
+    Used by the insight agent decision layer.
+    """
+    with _conn() as c:
+        rows = c.execute("""
+            SELECT substr(m.created_at,1,10) as day,
+                   m.valence, m.intensity, m.category, m.sub_tags
+            FROM mood_snapshots m
+            WHERE m.created_at >= datetime('now', ? || ' days')
+            ORDER BY m.created_at DESC
+        """, (f"-{days}",)).fetchall()
+    out = []
+    for r in rows:
+        try:
+            tags = json.loads(r["sub_tags"]) if r["sub_tags"] else []
+        except (json.JSONDecodeError, TypeError):
+            tags = []
+        out.append({
+            "day": r["day"],
+            "valence": r["valence"],
+            "intensity": r["intensity"],
+            "category": r["category"],
+            "sub_tags": tags,
+        })
+    return out
+
+
 def get_session_messages(session_id: str, limit: int = 20) -> list[dict[str, Any]]:
     """Return last N chat messages for a session as {role, content} dicts."""
     with _conn() as c:
@@ -387,5 +417,109 @@ def get_history(view: str = "timeline", day: str | None = None) -> list[dict[str
                 "sub_tags": json.loads(r["sub_tags"]) if r["sub_tags"] else [],
             })
         return out
+
+
+# ── agent tool backends ───────────────────────────────────────────────────────
+
+def search_entries(query: str, days: int = 14) -> list[dict[str, Any]]:
+    """
+    Full-text search over journal_entries.content within the last N days.
+    If query is empty, returns the most recent entries (recency scan).
+    Returns up to 8 entries: { created_at, mode, content, source }.
+    """
+    with _conn() as c:
+        if query.strip():
+            like = f"%{query}%"
+            rows = c.execute("""
+                SELECT created_at, mode, content, source
+                FROM journal_entries
+                WHERE role = 'user'
+                  AND content IS NOT NULL AND content != ''
+                  AND content LIKE ?
+                  AND created_at >= datetime('now', ? || ' days')
+                ORDER BY created_at DESC
+                LIMIT 8
+            """, (like, f"-{days}")).fetchall()
+        else:
+            rows = c.execute("""
+                SELECT created_at, mode, content, source
+                FROM journal_entries
+                WHERE role = 'user'
+                  AND content IS NOT NULL AND content != ''
+                  AND created_at >= datetime('now', ? || ' days')
+                ORDER BY created_at DESC
+                LIMIT 8
+            """, (f"-{days}",)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_mood_stats_for_agent(days: int = 14) -> dict[str, Any]:
+    """
+    Return a compact mood summary for the last N days.
+    Used as the backing function for the LLM get_mood_stats tool.
+    { category_counts, top_tags, avg_valence, total_entries }
+    """
+    with _conn() as c:
+        cat_rows = c.execute("""
+            SELECT category, COUNT(*) as count
+            FROM mood_snapshots
+            WHERE category IS NOT NULL
+              AND created_at >= datetime('now', ? || ' days')
+            GROUP BY category ORDER BY count DESC
+        """, (f"-{days}",)).fetchall()
+
+        val_row = c.execute("""
+            SELECT AVG(valence) as avg_v, COUNT(*) as total
+            FROM mood_snapshots
+            WHERE valence IS NOT NULL
+              AND created_at >= datetime('now', ? || ' days')
+        """, (f"-{days}",)).fetchone()
+
+        tag_rows = c.execute("""
+            SELECT sub_tags FROM mood_snapshots
+            WHERE sub_tags IS NOT NULL AND sub_tags != '[]'
+              AND created_at >= datetime('now', ? || ' days')
+        """, (f"-{days}",)).fetchall()
+
+    tag_counts: dict[str, int] = {}
+    for r in tag_rows:
+        try:
+            for t in json.loads(r["sub_tags"]):
+                tag_counts[t] = tag_counts.get(t, 0) + 1
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:8]
+
+    return {
+        "category_counts": {r["category"]: r["count"] for r in cat_rows},
+        "top_tags": [{"tag": t, "count": n} for t, n in top_tags],
+        "avg_valence": round(val_row["avg_v"], 3) if val_row["avg_v"] is not None else None,
+        "total_entries": val_row["total"] or 0,
+        "days": days,
+    }
+
+
+def get_last_reflect_summary() -> dict[str, Any] | None:
+    """
+    Return the most recent reflect session summary: the last user message sent
+    during a reflect chat, plus its date. Used to give the greeting a sense of
+    continuity ("Last time you mentioned…").
+    Returns None if no reflect session found within the last 30 days.
+    """
+    with _conn() as c:
+        row = c.execute("""
+            SELECT content, created_at
+            FROM journal_entries
+            WHERE role = 'user'
+              AND mode = 'reflect'
+              AND content IS NOT NULL AND content != ''
+              AND created_at >= datetime('now', '-30 days')
+            ORDER BY created_at DESC
+            LIMIT 1
+        """).fetchone()
+    if not row:
+        return None
+    return {"content": row["content"], "created_at": row["created_at"][:10]}
 
 

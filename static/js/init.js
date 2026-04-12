@@ -11,5 +11,7 @@
     await fetch('/api/warmup', { method: 'POST' });
   } catch {}
 
+  // Brief pause so the transition is visible, then collapse
+  await new Promise(r => setTimeout(r, 400));
   banner.classList.remove('visible');
 })();

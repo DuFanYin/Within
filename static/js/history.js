@@ -55,7 +55,6 @@ function renderEntryCard(e, container) {
 
   if (e.source === 'voice') {
     const v = document.createElement('span');
-    v.className = 'voice-badge';
     v.textContent = '🎙 Voice';
     v.style.fontSize = '.75rem';
     v.style.opacity = '.8';

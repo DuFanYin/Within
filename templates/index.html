@@ -8,9 +8,8 @@
 </head>
 <body>
 
-<div id="init-banner">⏳ Loading Gemma 4… first response may take a moment</div>
-
 <div id="shell">
+<div id="init-banner">⏳ Loading Gemma 4…</div>
   {% include "pages/home.html" %}
   {% include "pages/chat.html" %}
   {% include "pages/journal.html" %}
@@ -18,7 +17,7 @@
   {% include "pages/reflect.html" %}
   {% include "pages/insights.html" %}
 
-  <nav id="nav">
+<nav id="nav">
     <button class="nav-btn active" id="nav-home" onclick="showPage('home')">
       <svg viewBox="0 0 24 24"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg>
       Home

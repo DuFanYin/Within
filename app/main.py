@@ -23,11 +23,12 @@ from pydantic import BaseModel, Field
 from .db import (
     init_db, save_entry, save_mood,
     save_audio_file, update_audio_transcript, update_entry_content, get_pending_audio_entries,
+    get_recent_mood, get_last_reflect_summary,
     save_image_file, update_image_caption, get_pending_image_entries,
     get_session_messages, get_history, get_days_needing_summary, get_day_chat_messages,
     save_summary, get_corpus_entries, get_stats,
 )
-from .gemma_cactus import chat_stream_sync, extract_emotion_sync, summarize_sync, reflect_sync, reflect_stream_sync, warmup_sync, export_corpus_incremental, _corpus_cursor, tone_summary_sync, image_caption_sync
+from .gemma_cactus import chat_stream_sync, extract_emotion_sync, summarize_sync, warmup_sync, export_corpus_incremental, _corpus_cursor, tone_summary_sync, image_caption_sync, reflect_open_sync, reflect_agent_sync
 from .transcribe import transcribe_bytes_sync
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -319,31 +320,89 @@ async def journal(body: JournalBody) -> dict:
     return {"id": entry_id, "saved": True}
 
 
-# ── /api/reflect ──────────────────────────────────────────────────────────────
+# ── /api/reflect/open ─────────────────────────────────────────────────────────
 
-class ReflectBody(BaseModel):
-    question: str = Field(..., min_length=1, max_length=2000)
+@app.get("/api/reflect/open")
+async def reflect_open() -> StreamingResponse:
+    """
+    SSE stream for the Reflect opening sequence.
+    Emits step events while working, then a single `result` event with
+    { greeting, topics }.
+    """
+    def _step(msg: str) -> str:
+        return f"data: {json.dumps({'step': msg})}\n\n"
+
+    async def generate():
+        yield _step("Reading your recent entries…")
+        await asyncio.sleep(0)
+
+        snapshots, last_reflect = await asyncio.gather(
+            asyncio.to_thread(get_recent_mood, 14),
+            asyncio.to_thread(get_last_reflect_summary),
+        )
+        if not snapshots:
+            payload = {
+                "greeting": "I haven't seen many entries yet — keep journaling and I'll have more to reflect on.",
+                "topics": [{"label": "Something else", "question": "Something else on my mind", "rag_query": "", "type": "free"}],
+            }
+            yield f"data: {json.dumps({'result': payload})}\n\n"
+            return
+
+        yield _step("Finding what stands out…")
+        await asyncio.sleep(0)
+
+        result = await asyncio.to_thread(reflect_open_sync, snapshots)
+
+        yield _step("Putting it together…")
+        await asyncio.sleep(0)
+
+        if result.get("error"):
+            yield f"data: {json.dumps({'error': result['error']})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'result': result})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
-@app.post("/api/reflect")
-async def reflect(body: ReflectBody) -> dict:
-    try:
-        out = await asyncio.to_thread(reflect_sync, body.question)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-    if out.get("error"):
-        raise HTTPException(status_code=503, detail=out["error"])
-    return {"reply": out["reply"], "meta": out.get("meta")}
+# ── /api/reflect/chat ─────────────────────────────────────────────────────────
+
+class ReflectChatBody(BaseModel):
+    topic_label: str = Field(..., min_length=1, max_length=200)
+    topic_question: str = Field(default="", max_length=300)
+    rag_query: str = Field(default="", max_length=200)
+    history: list[dict] = Field(default_factory=list)
+    user_message: str = Field(..., min_length=1, max_length=2000)
 
 
-@app.post("/api/reflect/stream")
-async def reflect_stream(body: ReflectBody) -> StreamingResponse:
+@app.post("/api/reflect/chat")
+async def reflect_chat(body: ReflectChatBody) -> StreamingResponse:
+    """
+    One agentic reflect conversation turn.
+    Appends user_message to history, runs reflect_agent_sync (RAG + LLM),
+    streams tokens as SSE, ends with {done, reply} so the client can
+    append the assistant turn to its local history for the next call.
+    """
+    history = body.history + [{"role": "user", "content": body.user_message}]
     token_q: queue.Queue[str | None] = queue.Queue()
 
     async def generate():
         loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(None, reflect_stream_sync, body.question, token_q)
+        future = loop.run_in_executor(
+            None,
+            reflect_agent_sync,
+            body.topic_label,
+            body.topic_question,
+            body.rag_query,
+            history,
+            token_q,
+        )
 
+        full_parts: list[str] = []
         while True:
             try:
                 token = token_q.get(timeout=0.05)
@@ -352,6 +411,13 @@ async def reflect_stream(body: ReflectBody) -> StreamingResponse:
                 continue
             if token is None:
                 break
+            # Detect tool-call sentinels: "\x00TOOL:<label>\x00"
+            if token.startswith("\x00TOOL:") and token.endswith("\x00"):
+                label = token[6:-1]
+                yield f"data: {json.dumps({'tool_call': label})}\n\n"
+                await asyncio.sleep(0)
+                continue
+            full_parts.append(token)
             yield f"data: {json.dumps({'token': token})}\n\n"
 
         result = await future
@@ -359,10 +425,12 @@ async def reflect_stream(body: ReflectBody) -> StreamingResponse:
             yield f"data: {json.dumps({'error': result['error']})}\n\n"
             return
 
-        done_payload: dict = {"done": True}
-        if result.get("meta"):
-            done_payload["meta"] = result["meta"]
-        yield f"data: {json.dumps(done_payload)}\n\n"
+        reply = "".join(full_parts) or result.get("reply", "")
+        # Save as mode='reflect' so get_last_reflect_summary can find it
+        asyncio.create_task(asyncio.to_thread(
+            save_entry, "reflect", "user", body.user_message, "text", None
+        ))
+        yield f"data: {json.dumps({'done': True, 'reply': reply})}\n\n"
 
     return StreamingResponse(
         generate(),

@@ -9,6 +9,7 @@ function showPage(name) {
 
   if (name === 'history') loadHistory();
   if (name === 'insights') loadInsights();
+  if (name === 'reflect') loadReflectInsights();
   if (name === 'journal') {
     document.getElementById('journal-date').textContent =
       new Date().toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
