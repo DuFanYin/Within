@@ -55,8 +55,16 @@ function renderEntryCard(e, container) {
 
   if (e.source === 'voice') {
     const v = document.createElement('span');
-    v.textContent = '🎙';
-    v.style.fontSize = '.8rem';
+    v.className = 'voice-badge';
+    v.textContent = '🎙 Voice';
+    v.style.fontSize = '.75rem';
+    v.style.opacity = '.8';
+    header.appendChild(v);
+  } else if (e.source === 'image') {
+    const v = document.createElement('span');
+    v.textContent = '📷 Photo';
+    v.style.fontSize = '.75rem';
+    v.style.opacity = '.8';
     header.appendChild(v);
   }
 
@@ -66,10 +74,53 @@ function renderEntryCard(e, container) {
   header.appendChild(time);
   card.appendChild(header);
 
-  // content (collapsed by default, click to expand)
+  // content area
   const text = document.createElement('div');
   text.className = 'entry-text collapsed';
-  text.textContent = e.content;
+
+  if (e.source === 'image') {
+    // Thumbnail
+    if (e.image_id) {
+      const img = document.createElement('img');
+      img.src = `/api/image/${e.image_id}/file`;
+      img.style.cssText = 'width:100%;max-height:12rem;object-fit:cover;border-radius:var(--radius-xs);margin-bottom:.4rem;display:block;';
+      img.alt = 'Attached photo';
+      text.appendChild(img);
+    }
+    // Note text (if user wrote one)
+    if (e.content) {
+      const note = document.createElement('div');
+      note.textContent = e.content;
+      text.appendChild(note);
+    }
+    // AI caption
+    if (e.image_caption) {
+      const cap = document.createElement('div');
+      cap.style.cssText = 'margin-top:.4rem;font-size:.8rem;opacity:.7;font-style:italic;border-left:2px solid var(--ink-muted);padding-left:.5rem;';
+      cap.textContent = e.image_caption;
+      text.appendChild(cap);
+    }
+  } else if (e.source === 'voice') {
+    // transcript filled by background ASR job; show pending if not ready yet
+    if (e.tone_summary || e.content) {
+      if (e.content) {
+        const t = document.createElement('div');
+        t.textContent = e.content;
+        text.appendChild(t);
+      }
+      if (e.tone_summary) {
+        const tone = document.createElement('div');
+        tone.style.cssText = 'margin-top:.5rem;font-size:.8rem;opacity:.75;font-style:italic;border-left:2px solid var(--ink-muted);padding-left:.5rem;';
+        tone.textContent = e.tone_summary;
+        text.appendChild(tone);
+      }
+    } else {
+      text.innerHTML = '<em style="opacity:.6">🎙 Voice — transcript processing…</em>';
+    }
+  } else {
+    text.textContent = e.content;
+  }
+
   card.appendChild(text);
 
   let expanded = false;
@@ -199,6 +250,7 @@ async function loadCalendar() {
     grid.appendChild(cell);
   }
 }
+
 
 async function loadCalendarDay(day) {
   const container = document.getElementById('cal-day-entries');

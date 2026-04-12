@@ -32,32 +32,34 @@ async function toggleRecording(target) {
   mediaRecorder.onstop = async () => {
     stream.getTracks().forEach(t => t.stop());
     setRecBtn(target, false);
-    setRecStatus(target, 'Transcribing…');
 
     const blob = new Blob(audioChunks, { type: 'audio/webm' });
-    const fd = new FormData();
-    fd.append('file', blob, 'audio.webm');
 
-    try {
-      const res = await fetch('/api/transcribe', { method: 'POST', body: fd });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(data.detail || res.statusText);
-      const text = (data.text || '').trim();
-      if (target === 'chat') {
-        const el = document.getElementById('chat-input');
-        el.value = (el.value ? el.value + ' ' : '') + text;
-      } else {
-        const el = document.getElementById('journal-textarea');
-        el.value = (el.value ? el.value + '\n' : '') + text;
-      }
+    if (target === 'chat') {
+      // Hand blob to chat.js — actual sending happens when user taps Send
+      setChatAudioBlob(blob);
       setRecStatus(target, '');
-    } catch (err) {
-      setRecStatus(target, 'Transcribe failed: ' + err.message, true);
+    } else {
+      // Journal: save raw audio; background job will transcribe + summarise tone
+      setRecStatus(target, 'Saving…');
+      const fd = new FormData();
+      fd.append('file', blob, 'audio.webm');
+      fd.append('mode', 'journal');
+      try {
+        const res = await fetch('/api/voice', { method: 'POST', body: fd });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || res.statusText);
+        setRecStatus(target, 'Voice saved ✓');
+        setTimeout(() => setRecStatus(target, ''), 2500);
+      } catch (err) {
+        setRecStatus(target, 'Save failed: ' + err.message, true);
+      }
     }
   };
 
   mediaRecorder.start();
 }
+
 
 function setRecBtn(target, recording) {
   document.getElementById(target + '-rec-btn').classList.toggle('recording', recording);

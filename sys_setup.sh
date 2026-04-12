@@ -67,16 +67,23 @@ _engine_install_python_tools() {
   [[ -d "$VENV" ]] || python3.12 -m venv "$VENV"
   [[ -x "$PY" ]] || { echo "ERROR: no $PY"; exit 1; }
 
+  # Ensure pip is present even if the venv predates it or was partially cleaned.
+  echo "  [1/4] Bootstrapping pip..."
+  "$PY" -m ensurepip --upgrade -q 2>/dev/null || true
   "$PY" -m pip install --upgrade pip -q
+
   REQ="${ENGINE}/python/requirements.txt"
   [[ -f "$REQ" ]] || { echo "ERROR: missing $REQ"; exit 1; }
+  echo "  [2/4] Installing engine requirements ($REQ)..."
   "$PY" -m pip install -r "$REQ" -q
 
   PARENT_REQ="${ENGINE}/../requirements.txt"
   if [[ -f "$PARENT_REQ" ]] && [[ "$PARENT_REQ" != "$REQ" ]]; then
+    echo "  [3/4] Installing app requirements ($PARENT_REQ)..."
     "$PY" -m pip install -r "$PARENT_REQ" -q || true
   fi
 
+  echo "  [4/4] Installing cactus CLI (editable)..."
   "$PY" -m pip install -e "${ENGINE}/python" -q
   echo "cactus CLI at ${VENV}/bin/cactus"
 }
@@ -152,7 +159,17 @@ EOF
 APP_PY="${APP_ROOT}/.venv/bin/python"
 echo ""
 echo "App venv + requirements (embedded)..."
+# Rebuild venv if missing OR if its activate script points to a stale path
+# (happens when the repo is moved/renamed after the venv was first created).
+_venv_stale=0
 if [[ ! -d "${APP_ROOT}/.venv" ]]; then
+  _venv_stale=1
+elif ! grep -q "VIRTUAL_ENV.*${APP_ROOT}/.venv" "${APP_ROOT}/.venv/bin/activate" 2>/dev/null; then
+  echo "  Detected stale venv (path mismatch); rebuilding..."
+  rm -rf "${APP_ROOT}/.venv"
+  _venv_stale=1
+fi
+if [[ "$_venv_stale" -eq 1 ]]; then
   python3 -m venv "${APP_ROOT}/.venv"
 fi
 # shellcheck disable=SC1091
@@ -163,8 +180,12 @@ set +a
   echo "ERROR: missing ${APP_ROOT}/requirements.txt"
   exit 1
 }
+# Ensure pip is present even if the venv predates it or was partially cleaned.
+echo "  [1/2] Bootstrapping pip..."
+"${APP_PY}" -m ensurepip --upgrade -q 2>/dev/null || true
 "${APP_PY}" -m pip install --upgrade pip -q
-"${APP_PY}" -m pip install -r "${APP_ROOT}/requirements.txt"
+echo "  [2/2] Installing app requirements..."
+"${APP_PY}" -m pip install -r "${APP_ROOT}/requirements.txt" -q
 
 echo ""
 echo "Done. Run the app:"

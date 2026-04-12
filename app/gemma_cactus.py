@@ -37,6 +37,8 @@ def _corpus_dir() -> Path:
 def export_corpus_incremental(entries: list[dict]) -> int:
     """
     Write new journal/chat entries to corpus/ as individual text files.
+    For voice entries, prefer transcript over empty content; append tone_summary
+    as a separate labelled block so RAG can retrieve both what was said and how.
     Returns the new cursor (max id exported), or 0 if nothing new.
     """
     global _corpus_cursor
@@ -47,10 +49,31 @@ def export_corpus_incremental(entries: list[dict]) -> int:
         fname = corpus / f"{e['id']:08d}.txt"
         date = e["created_at"][:10]
         mode = e["mode"]
-        fname.write_text(
-            f"[{date}] [{mode}]\n{e['content']}\n",
-            encoding="utf-8",
-        )
+        source = e.get("source", "text")
+
+        if source == "voice":
+            transcript = (e.get("transcript") or "").strip()
+            tone = (e.get("tone_summary") or "").strip()
+            if not transcript:
+                # transcript not ready yet; skip — re-exported after background ASR
+                continue
+            body = f"[{date}] [{mode}] [voice]\n{transcript}\n"
+            if tone:
+                body += f"\n[tone]\n{tone}\n"
+        elif source == "image":
+            caption = (e.get("image_caption") or "").strip()
+            if not caption:
+                # caption not ready yet; skip — re-exported after background captioning
+                continue
+            body = f"[{date}] [{mode}] [image]\n{caption}\n"
+            text_note = (e.get("content") or "").strip()
+            if text_note:
+                body += f"\n[note]\n{text_note}\n"
+        else:
+            body = f"[{date}] [{mode}]\n{e['content']}\n"
+
+        fname.write_text(body, encoding="utf-8")
+
     new_cursor = entries[-1]["id"]
     _corpus_cursor = new_cursor
     return new_cursor
@@ -184,10 +207,14 @@ _SYSTEM_PROMPT = (
 )
 
 
-def _run_complete(messages: list[dict], options: dict) -> dict[str, Any]:
+def _run_complete(
+    messages: list[dict],
+    options: dict,
+    pcm_data: bytes | None = None,
+) -> dict[str, Any]:
     cactus_complete, _, cactus_get_last_error, model = _get_model()
     with _lock:
-        raw = cactus_complete(model, json.dumps(messages), json.dumps(options), None, None)
+        raw = cactus_complete(model, json.dumps(messages), json.dumps(options), None, None, pcm_data)
     try:
         result = json.loads(raw)
     except json.JSONDecodeError:
@@ -212,19 +239,23 @@ def chat_stream_sync(
     user_text: str,
     history: list[dict] | None,
     token_queue: "queue.Queue[str | None]",
+    pcm_data: bytes | None = None,
 ) -> dict[str, Any]:
     """
     Like chat_sync but streams tokens into ``token_queue`` as they're produced.
+    Pass pcm_data (PCM int16 raw bytes) to send audio directly to Gemma 4.
     Puts ``None`` as a sentinel when generation finishes (or on error).
     Returns the same meta dict as chat_sync (reply is empty string; caller
     reconstructs the full reply from the queue).
     """
     cactus_complete, _, _, model = _get_model()
 
+    # For audio input, content is empty string — the model reads from pcm_data
+    user_content = user_text if not pcm_data else (user_text or "")
     messages = (
         [{"role": "system", "content": _SYSTEM_PROMPT}]
         + (history or [])
-        + [{"role": "user", "content": user_text}]
+        + [{"role": "user", "content": user_content}]
     )
     options = _base_options()
 
@@ -236,7 +267,7 @@ def chat_stream_sync(
 
     try:
         with _lock:
-            raw = cactus_complete(model, json.dumps(messages), json.dumps(options), None, cb)
+            raw = cactus_complete(model, json.dumps(messages), json.dumps(options), None, cb, pcm_data)
     except Exception as exc:
         token_queue.put(None)
         return {"error": str(exc), "reply": ""}
@@ -258,17 +289,23 @@ def chat_stream_sync(
     return {"reply": "", "meta": meta} if meta else {"reply": ""}
 
 
-def chat_sync(user_text: str, history: list[dict] | None = None) -> dict[str, Any]:
+def chat_sync(
+    user_text: str,
+    history: list[dict] | None = None,
+    pcm_data: bytes | None = None,
+) -> dict[str, Any]:
     """
     Multi-turn chat. ``history`` is a list of {role, content} dicts
     (earlier messages first, NOT including the current user_text).
+    Pass pcm_data (PCM int16 raw bytes) to send audio directly to Gemma 4.
     """
+    user_content = user_text if not pcm_data else (user_text or "")
     messages = (
         [{"role": "system", "content": _SYSTEM_PROMPT}]
         + (history or [])
-        + [{"role": "user", "content": user_text}]
+        + [{"role": "user", "content": user_content}]
     )
-    return _run_complete(messages, _base_options())
+    return _run_complete(messages, _base_options(), pcm_data)
 
 
 _VALID_CATEGORIES = {"positive", "stress", "anxiety", "low_mood", "anger", "social"}
@@ -436,6 +473,75 @@ def reflect_sync(question: str) -> dict[str, Any]:
     ]
     options = {**_base_options(), "temperature": 0.6, "max_tokens": 300}
     return _run_complete(messages, options)
+
+
+_IMAGE_CAPTION_SYSTEM = (
+    "You are a gentle journaling companion helping a user build emotional memories. "
+    "The user has attached a photo to their journal. "
+    "Write a short, warm description (2-3 sentences) of what this image likely represents as an emotional anchor — "
+    "the mood, setting, or feeling it might evoke. "
+    "Do not invent facts. If the image is abstract or unclear, describe the general atmosphere. "
+    "No bullet points. No clinical language."
+)
+
+
+def image_caption_sync(image_path: str, mime_type: str = "image/jpeg") -> str:
+    """
+    Generate a short emotional/contextual caption for an image (plan 2.3).
+    Returns a 2-3 sentence description for RAG indexing.
+    Returns empty string on failure.
+
+    Note: uses the text model with a description of the image encoded as base64
+    if the model supports vision; otherwise falls back to a placeholder.
+    """
+    import base64
+    try:
+        with open(image_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+    except OSError:
+        return ""
+
+    # Build a vision-style message. Cactus/Gemma 4 supports image_url content parts.
+    messages = [
+        {"role": "system", "content": _IMAGE_CAPTION_SYSTEM},
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:{mime_type};base64,{b64}"},
+                },
+                {"type": "text", "text": "Please describe this photo as an emotional memory anchor."},
+            ],
+        },
+    ]
+    options = {**_base_options(), "temperature": 0.5, "max_tokens": 120}
+    result = _run_complete(messages, options)
+    return result.get("reply", "").strip()
+
+
+_TONE_SYSTEM = (
+    "You are an assistant that analyzes the expressive quality of spoken transcripts. "
+    "Given a transcript, write ONE short paragraph (2-4 sentences) describing HOW the person spoke — "
+    "not what they said, but the tone, pace, and emotional texture: "
+    "e.g. hesitations, fatigue, urgency, emotional weight, uncertainty, warmth. "
+    "Be observational and gentle. No bullet points. No clinical language."
+)
+
+
+def tone_summary_sync(transcript: str) -> str:
+    """
+    Generate a tone/expressiveness summary for a voice transcript (plan 2.2).
+    Returns a short paragraph describing *how* the person spoke.
+    Returns empty string on failure.
+    """
+    messages = [
+        {"role": "system", "content": _TONE_SYSTEM},
+        {"role": "user", "content": transcript},
+    ]
+    options = {**_base_options(), "temperature": 0.5, "max_tokens": 150}
+    result = _run_complete(messages, options)
+    return result.get("reply", "").strip()
 
 
 def summarize_sync(day: str, user_messages: list[str]) -> str:

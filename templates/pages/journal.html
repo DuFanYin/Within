@@ -10,11 +10,22 @@
 
   <textarea id="journal-textarea" placeholder="Write how you feel… no one will respond, this is just for you." maxlength="8000"></textarea>
 
+  <!-- image preview (hidden until a photo is chosen) -->
+  <div id="journal-img-preview" class="img-preview">
+    <img id="journal-img-thumb" alt="">
+    <button class="img-preview-close" onclick="clearJournalImage()">×</button>
+  </div>
+  <input type="file" id="journal-img-input" accept="image/*" style="display:none" onchange="onJournalImagePicked(this)">
+
   <div style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap;">
     <button class="save-btn" id="journal-save" onclick="saveJournal()">Save</button>
     <button class="rec-btn has-label" id="journal-rec-btn" onclick="toggleRecording('journal')" title="Voice input">
       <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v4M8 23h8"/></svg>
       <span>Voice</span>
+    </button>
+    <button class="rec-btn has-label" id="journal-img-btn" onclick="document.getElementById('journal-img-input').click()" title="Attach photo">
+      <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+      <span>Photo</span>
     </button>
     <span class="status-bar" id="journal-rec-status"></span>
     <span class="status-bar" id="journal-status" style="margin-left:auto;"></span>
