@@ -143,6 +143,70 @@ def tone_summary_sync(transcript: str) -> str:
     return result.get("reply", "").strip()
 
 
+_NARRATIVE_SYSTEM = (
+    "You are a warm, perceptive journaling companion writing a brief weekly reflection for the user. "
+    "You are given structured mood data: entry counts, dominant emotional categories, valence trends, and frequent tags. "
+    "Write exactly 3 sentences in second person (You…). "
+    "Sentence 1: what you noticed about their week (entry volume + dominant emotion). "
+    "Sentence 2: one specific detail — a tag that kept appearing, a mood shift, or a pattern. "
+    "Sentence 3: something gently forward-looking or affirming — not advice, just warmth. "
+    "Do not use bullet points, headers, or lists. No clinical language. Sound like a thoughtful friend."
+)
+
+
+def insight_narrative_sync(stats: dict) -> str:
+    """
+    Generate a 3-sentence weekly narrative from aggregated mood stats.
+    stats = { daily, tags, categories } from get_stats().
+    Returns a string, or empty string on failure.
+    """
+    daily = stats.get("daily", [])
+    categories = stats.get("categories", [])
+    tags = stats.get("tags", [])
+
+    if not daily and not categories:
+        return ""
+
+    # Build a compact text summary to feed the LLM
+    from datetime import date, timedelta
+    today = date.today()
+    week_ago = (today - timedelta(days=7)).isoformat()
+    recent = [d for d in daily if d["day"] >= week_ago]
+    total_recent = sum(d["count"] for d in recent)
+    total_all = sum(d["count"] for d in daily)
+
+    valences = [d["valence"] for d in recent if d.get("valence") is not None]
+    avg_valence = round(sum(valences) / len(valences), 2) if valences else None
+
+    top_cat = categories[0]["category"].replace("_", " ") if categories else None
+    top_tags = [t["tag"].replace("_", " ") for t in tags[:3]]
+
+    # Trend: compare first half vs second half of recent days
+    trend = "stable"
+    if len(valences) >= 4:
+        mid = len(valences) // 2
+        if sum(valences[mid:]) / (len(valences) - mid) > sum(valences[:mid]) / mid + 0.1:
+            trend = "improving"
+        elif sum(valences[mid:]) / (len(valences) - mid) < sum(valences[:mid]) / mid - 0.1:
+            trend = "declining"
+
+    summary_lines = [
+        f"Entries this week: {total_recent} (total logged: {total_all})",
+        f"Dominant emotion: {top_cat}" if top_cat else "",
+        f"Average mood valence: {avg_valence} (trend: {trend})" if avg_valence is not None else "",
+        f"Most frequent feelings: {', '.join(top_tags)}" if top_tags else "",
+    ]
+    summary = "\n".join(l for l in summary_lines if l)
+
+    messages = [
+        {"role": "system", "content": _NARRATIVE_SYSTEM},
+        {"role": "user", "content": summary},
+    ]
+    options = {**_base_options(), "temperature": 0.7, "max_tokens": 120}
+    result = _run_complete(messages, options)
+    return result.get("reply", "").strip()
+
+
 def summarize_sync(day: str, user_messages: list[str]) -> str:
     """
     Generate a concise daily summary from a list of user chat messages.

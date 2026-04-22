@@ -1,0 +1,1653 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"/>
+<title>Within</title>
+<link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --bg:          oklch(0.97 0.012 75);
+  --surface:     oklch(0.995 0.006 75);
+  --surface-alt: oklch(0.94 0.014 75);
+  --accent:      oklch(0.48 0.07 45);
+  --accent-dim:  oklch(0.55 0.06 45);
+  --accent-soft: oklch(0.92 0.025 75);
+  --positive:    oklch(0.55 0.08 145);
+  --positive-bg: oklch(0.94 0.03 145);
+  --neg:         oklch(0.52 0.08 20);
+  --neg-bg:      oklch(0.95 0.025 20);
+  --reflect:     oklch(0.50 0.06 255);
+  --reflect-bg:  oklch(0.94 0.02 255);
+  --ink:         oklch(0.22 0.02 60);
+  --ink-mid:     oklch(0.45 0.025 60);
+  --ink-muted:   oklch(0.62 0.018 70);
+  --border:      oklch(0.88 0.015 75);
+  --border-soft: oklch(0.92 0.01 75);
+  --radius:      18px;
+  --radius-sm:   12px;
+  --radius-xs:   8px;
+  --shadow:      0 1px 6px oklch(0.22 0.02 60 / 0.07);
+  --shadow-md:   0 4px 20px oklch(0.22 0.02 60 / 0.11);
+  --shadow-lg:   0 12px 40px oklch(0.22 0.02 60 / 0.14);
+  --font:        'DM Serif Display', Georgia, serif;
+  --font-ui:     'Inter', system-ui, sans-serif;
+}
+
+html, body { height: 100%; overflow: hidden; background: oklch(0.20 0.01 60); }
+
+body {
+  font-family: var(--font-ui);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-font-smoothing: antialiased;
+}
+
+#root {
+  width: 390px;
+  height: 844px;
+  max-height: 100vh;
+  position: relative;
+  overflow: hidden;
+  border-radius: 48px;
+  box-shadow: 0 30px 80px rgba(0,0,0,0.5);
+  background: var(--bg);
+}
+
+@media (max-width: 420px) {
+  #root { width: 100vw; height: 100dvh; border-radius: 0; box-shadow: none; }
+  body { background: var(--bg); }
+}
+
+/* ── Page system ── */
+.pages {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+.page {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.22s ease;
+}
+.page.active {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+/* ── Scrollable body ── */
+.page-scroll {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.page-scroll::-webkit-scrollbar { display: none; }
+
+/* ── Header ── */
+.header {
+  display: flex;
+  align-items: center;
+  padding: 56px 22px 14px;
+  gap: 8px;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+}
+.header-title {
+  font-family: var(--font);
+  font-size: 1.35rem;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.header-back {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 4px;
+  color: var(--ink-mid);
+  line-height: 0;
+  margin-left: -4px;
+}
+.header-back svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.header-action {
+  margin-left: auto;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  padding: 5px 14px;
+  font-size: 0.78rem;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  color: var(--ink-mid);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+.header-action:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Bottom nav pill ── */
+.nav-pill {
+  position: absolute;
+  bottom: 28px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: oklch(0.995 0.005 75 / 0.88);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--border-soft);
+  border-radius: 99px;
+  padding: 6px 8px;
+  box-shadow: var(--shadow-md);
+  z-index: 100;
+}
+.nav-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 14px;
+  border: none;
+  background: none;
+  cursor: pointer;
+  border-radius: 99px;
+  transition: background 0.15s;
+  color: var(--ink-muted);
+}
+.nav-btn svg { width: 20px; height: 20px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; transition: stroke 0.15s; }
+.nav-btn span { font-size: 0.6rem; font-weight: 500; font-family: var(--font-ui); letter-spacing: 0.02em; transition: color 0.15s; }
+.nav-btn.active { background: var(--accent-soft); color: var(--accent); }
+.nav-btn.active svg { stroke: var(--accent); }
+.nav-btn.active span { color: var(--accent); }
+
+/* ── Home page ── */
+.home-orb {
+  position: absolute;
+  top: -60px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 300px;
+  height: 300px;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at 40% 40%,
+    oklch(0.82 0.08 75) 0%,
+    oklch(0.88 0.05 65) 40%,
+    oklch(0.94 0.02 80) 70%,
+    transparent 100%);
+  opacity: 0.55;
+  filter: blur(40px);
+  animation: orbFloat 8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes orbFloat {
+  0%, 100% { transform: translateX(-50%) translateY(0px) scale(1); }
+  50%       { transform: translateX(-50%) translateY(12px) scale(1.04); }
+}
+
+.home-body {
+  padding: 0 20px 86px;
+}
+.home-greeting {
+  padding: 56px 4px 10px;
+  position: relative;
+}
+.home-greeting-eyebrow {
+  font-size: 0.72rem;
+  font-weight: 500;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-muted);
+  margin-bottom: 6px;
+  font-family: var(--font-ui);
+}
+.home-greeting h1 {
+  font-family: var(--font);
+  font-size: 1.85rem;
+  color: var(--ink);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.home-greeting h1 em { font-style: italic; color: var(--accent); }
+.home-greeting p {
+  margin-top: 3px;
+  font-size: 0.76rem;
+  color: var(--ink-muted);
+  line-height: 1.45;
+}
+.home-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+.home-card {
+  background: var(--surface);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  padding: 11px 13px;
+  cursor: pointer;
+  transition: box-shadow 0.2s, transform 0.15s;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.home-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.home-card:active { transform: translateY(0); box-shadow: var(--shadow); }
+.home-card.wide { grid-column: 1 / -1; flex-direction: row; align-items: center; gap: 10px; padding: 10px 14px; }
+.home-card-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.home-card-icon svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.icon-journal { background: var(--positive-bg); color: var(--positive); }
+.icon-chat    { background: var(--accent-soft); color: var(--accent); }
+.icon-reflect { background: var(--reflect-bg); color: var(--reflect); }
+.icon-insights { background: oklch(0.94 0.03 55); color: oklch(0.50 0.08 55); }
+
+.home-card-label {
+  font-size: 0.88rem;
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.home-card-desc {
+  font-size: 0.74rem;
+  color: var(--ink-muted);
+  line-height: 1.45;
+  margin-top: 1px;
+}
+
+.home-streak {
+  margin-top: 5px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.home-streak-dots {
+  display: flex;
+  gap: 5px;
+  flex: 1;
+}
+.streak-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+  transition: background 0.2s;
+}
+.streak-dot.filled { background: var(--accent); }
+.streak-dot.half   { background: linear-gradient(to right, var(--accent) 50%, var(--border) 50%); }
+
+.home-streak-text { font-size: 0.8rem; color: var(--ink-mid); font-family: var(--font-ui); }
+.home-streak-text strong { color: var(--ink); font-weight: 600; }
+
+/* ── Chat page ── */
+.chat-log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 20px 16px;
+}
+.chat-log::-webkit-scrollbar { display: none; }
+
+.bubble-row { display: flex; flex-direction: column; }
+.bubble-row-user { align-items: flex-end; }
+.bubble-row-assistant { align-items: flex-start; }
+
+.bubble {
+  max-width: 80%;
+  padding: 8px 12px;
+  border-radius: 18px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+.bubble-user {
+  background: var(--accent);
+  color: #fff;
+  border-bottom-right-radius: 5px;
+}
+.bubble-assistant {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink);
+  border-bottom-left-radius: 5px;
+  font-family: var(--font);
+  font-size: 0.84rem;
+}
+.bubble-time {
+  font-size: 0.65rem;
+  color: var(--ink-muted);
+  margin-top: 3px;
+  padding: 0 4px;
+  font-family: var(--font-ui);
+}
+
+.chat-typing {
+  display: flex;
+  gap: 4px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  border-bottom-left-radius: 5px;
+  width: fit-content;
+}
+.typing-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  background: var(--ink-muted);
+  animation: typingBounce 1.2s ease-in-out infinite;
+}
+.typing-dot:nth-child(2) { animation-delay: 0.15s; }
+.typing-dot:nth-child(3) { animation-delay: 0.3s; }
+@keyframes typingBounce {
+  0%, 80%, 100% { transform: translateY(0); opacity: 0.4; }
+  40% { transform: translateY(-5px); opacity: 1; }
+}
+
+.chat-input-area {
+  flex-shrink: 0;
+  padding: 10px 16px 100px;
+  border-top: 1px solid var(--border-soft);
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  background: var(--bg);
+}
+.chat-input {
+  flex: 1;
+  resize: none;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  padding: 10px 16px;
+  font-size: 0.9rem;
+  font-family: var(--font-ui);
+  line-height: 1.45;
+  outline: none;
+  background: var(--surface);
+  color: var(--ink);
+  max-height: 120px;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.chat-input::placeholder { color: var(--ink-muted); }
+.chat-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px oklch(0.48 0.07 45 / 0.12); }
+.send-btn {
+  width: 40px; height: 40px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.15s, transform 0.1s;
+}
+.send-btn:hover { background: var(--accent-dim); }
+.send-btn:active { transform: scale(0.93); }
+.send-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.send-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+
+/* ── Journal page ── */
+.journal-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 0 20px;
+  gap: 12px;
+  min-height: 0;
+}
+.journal-meta {
+  font-size: 0.78rem;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+}
+.journal-textarea {
+  flex: 1;
+  resize: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  font-family: var(--font);
+  font-size: 1.15rem;
+  line-height: 1.75;
+  color: var(--ink);
+  padding: 0;
+}
+.journal-textarea::placeholder { color: var(--ink-muted); font-style: italic; }
+.journal-footer {
+  flex-shrink: 0;
+  padding: 12px 20px 100px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border-top: 1px solid var(--border-soft);
+}
+.word-count {
+  font-size: 0.75rem;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  flex: 1;
+}
+.journal-save-btn {
+  height: 38px;
+  padding: 0 20px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 99px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-family: var(--font-ui);
+  transition: background 0.15s, transform 0.1s;
+}
+.journal-save-btn:hover { background: var(--accent-dim); }
+.journal-save-btn:active { transform: scale(0.97); }
+.journal-save-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.journal-saved-toast {
+  position: absolute;
+  bottom: 120px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--ink);
+  color: #fff;
+  font-size: 0.8rem;
+  font-family: var(--font-ui);
+  padding: 8px 18px;
+  border-radius: 99px;
+  white-space: nowrap;
+  opacity: 0;
+  animation: toastIn 2.5s ease forwards;
+  pointer-events: none;
+}
+@keyframes toastIn {
+  0%   { opacity: 0; transform: translateX(-50%) translateY(8px); }
+  15%  { opacity: 1; transform: translateX(-50%) translateY(0); }
+  75%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ── Media buttons (mic + image) ── */
+.media-btn {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--ink-mid);
+  display: flex; align-items: center; justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.media-btn svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.media-btn:hover { border-color: var(--accent); color: var(--accent); }
+.media-btn.recording {
+  background: var(--neg-bg);
+  border-color: var(--neg);
+  color: var(--neg);
+  animation: pulse-rec 1.2s ease-in-out infinite;
+}
+@keyframes pulse-rec {
+  0%, 100% { box-shadow: 0 0 0 0 oklch(0.52 0.08 20 / 0.3); }
+  50%       { box-shadow: 0 0 0 5px oklch(0.52 0.08 20 / 0); }
+}
+
+/* ── Image preview strip ── */
+.img-preview-strip {
+  flex-shrink: 0;
+  padding: 0 20px;
+  display: none;
+}
+.img-preview-strip.visible { display: block; }
+.img-preview-strip img {
+  width: 100%;
+  max-height: 120px;
+  object-fit: cover;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: block;
+}
+.img-preview-strip-inner { position: relative; }
+.img-preview-remove {
+  position: absolute;
+  top: 6px; right: 6px;
+  width: 24px; height: 24px;
+  border-radius: 50%;
+  background: rgba(0,0,0,0.45);
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
+  line-height: 1;
+}
+
+/* ── History page ── */
+.history-toggle {
+  display: flex;
+  background: var(--surface-alt);
+  border-radius: 99px;
+  padding: 3px;
+  gap: 2px;
+  margin: 0 20px 16px;
+  flex-shrink: 0;
+}
+.toggle-opt {
+  flex: 1;
+  padding: 7px;
+  border: none;
+  border-radius: 99px;
+  background: none;
+  cursor: pointer;
+  font-size: 0.8rem;
+  font-weight: 500;
+  font-family: var(--font-ui);
+  color: var(--ink-muted);
+  transition: all 0.15s;
+}
+.toggle-opt.active { background: var(--surface); color: var(--ink); box-shadow: var(--shadow); }
+
+.timeline { padding: 4px 20px 120px; display: flex; flex-direction: column; position: relative; }
+.timeline::before {
+  content: '';
+  position: absolute;
+  left: 33px;
+  top: 8px;
+  bottom: 8px;
+  width: 1.5px;
+  background: var(--border);
+}
+.tl-item {
+  display: flex;
+  gap: 14px;
+  padding: 8px 0;
+  cursor: pointer;
+}
+.tl-dot-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex-shrink: 0;
+  padding-top: 4px;
+}
+.tl-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  border: 2px solid var(--bg);
+  flex-shrink: 0;
+  transition: transform 0.2s;
+}
+.tl-item:hover .tl-dot { transform: scale(1.25); }
+.tl-card {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  transition: box-shadow 0.15s;
+  min-width: 0;
+}
+.tl-item:hover .tl-card { box-shadow: var(--shadow); }
+.tl-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.tl-mode-chip {
+  font-size: 0.62rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  padding: 2px 8px;
+  border-radius: 99px;
+  font-family: var(--font-ui);
+}
+.chip-journal { background: var(--positive-bg); color: var(--positive); }
+.chip-chat    { background: var(--accent-soft); color: var(--accent); }
+.chip-reflect { background: var(--reflect-bg); color: var(--reflect); }
+.tl-time { font-size: 0.68rem; color: var(--ink-muted); font-family: var(--font-ui); margin-left: auto; }
+.tl-text {
+  font-family: var(--font);
+  font-size: 0.9rem;
+  color: var(--ink-mid);
+  line-height: 1.55;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.tl-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.tl-tag {
+  font-size: 0.65rem;
+  padding: 2px 8px;
+  border-radius: 99px;
+  background: var(--surface-alt);
+  color: var(--ink-mid);
+  font-family: var(--font-ui);
+}
+.mood-bar {
+  height: 2px;
+  background: var(--border-soft);
+  border-radius: 99px;
+  margin-top: 8px;
+  overflow: hidden;
+}
+.mood-fill { height: 100%; border-radius: 99px; }
+
+.tl-date-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  padding: 16px 0 4px 26px;
+}
+
+/* ── Calendar view ── */
+.cal-body { padding: 0 20px 120px; }
+.cal-month { font-family: var(--font); font-size: 1.1rem; color: var(--ink); margin-bottom: 12px; }
+.cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal-header { font-size: 0.65rem; text-align: center; font-weight: 600; color: var(--ink-muted); padding: 4px 0; font-family: var(--font-ui); }
+.cal-day {
+  aspect-ratio: 1;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.8rem;
+  font-family: var(--font-ui);
+  font-weight: 500;
+  border: 1px solid var(--border-soft);
+  background: var(--surface);
+  cursor: pointer;
+  transition: all 0.12s;
+  color: var(--ink);
+  position: relative;
+}
+.cal-day.empty { background: transparent; border-color: transparent; cursor: default; }
+.cal-day.today { border-color: var(--accent); color: var(--accent); font-weight: 700; }
+.cal-day.has-mood { border-color: transparent; }
+.cal-day:not(.empty):hover { box-shadow: var(--shadow); }
+
+/* ── Reflect page ── */
+.reflect-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 60px 20px;
+  color: var(--ink-muted);
+}
+.reflect-spinner {
+  width: 32px; height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.9s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.reflect-loading-text { font-size: 0.85rem; font-family: var(--font-ui); color: var(--ink-muted); font-style: italic; }
+
+.reflect-intro {
+  padding: 20px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+  flex-shrink: 0;
+}
+.reflect-intro p {
+  font-family: var(--font);
+  font-size: 1.05rem;
+  color: var(--ink);
+  line-height: 1.6;
+  font-style: italic;
+}
+.reflect-topics {
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  flex: 1;
+  overflow-y: auto;
+}
+.reflect-topics::-webkit-scrollbar { display: none; }
+.reflect-topics-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  margin-bottom: 4px;
+}
+.reflect-topic-btn {
+  padding: 14px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, box-shadow 0.15s;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+.reflect-topic-btn:hover { border-color: var(--accent); box-shadow: var(--shadow); }
+.reflect-topic-icon {
+  width: 32px; height: 32px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+.reflect-topic-icon svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.reflect-topic-title {
+  font-size: 0.9rem;
+  font-weight: 600;
+  color: var(--ink);
+  margin-bottom: 3px;
+  font-family: var(--font-ui);
+}
+.reflect-topic-sub {
+  font-size: 0.8rem;
+  color: var(--ink-muted);
+  line-height: 1.45;
+  font-family: var(--font-ui);
+}
+
+.reflect-chat-log {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 12px 20px 0;
+}
+.reflect-chat-log::-webkit-scrollbar { display: none; }
+
+/* ── Insights page ── */
+.insights-body { padding: 4px 20px 120px; display: flex; flex-direction: column; gap: 28px; }
+.insights-section { display: flex; flex-direction: column; gap: 10px; }
+.insights-section-title {
+  font-family: var(--font);
+  font-size: 1.2rem;
+  color: var(--ink);
+  letter-spacing: -0.01em;
+}
+.insights-section-sub { font-size: 0.75rem; color: var(--ink-muted); font-family: var(--font-ui); }
+
+/* heatmap */
+.heatmap-wrap { overflow-x: auto; }
+.heatmap-wrap::-webkit-scrollbar { display: none; }
+.heatmap-grid { display: flex; gap: 4px; align-items: flex-end; }
+.heatmap-week { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.heatmap-cell { width: 20px; height: 20px; border-radius: 4px; background: var(--surface-alt); }
+.heatmap-dow-labels {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex-shrink: 0;
+  padding-top: 0;
+}
+.heatmap-dow-labels span {
+  font-size: 0.62rem;
+  color: var(--ink-muted);
+  font-family: var(--font-ui);
+  height: 20px;
+  line-height: 20px;
+  text-align: right;
+  padding-right: 4px;
+}
+.heatmap-legend {
+  display: flex;
+  gap: 16px;
+  margin-top: 10px;
+  align-items: center;
+}
+.legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.7rem; color: var(--ink-muted); font-family: var(--font-ui); }
+.legend-dot { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
+
+/* bar chart */
+.bar-chart { display: flex; flex-direction: column; gap: 10px; }
+.bar-row { display: flex; align-items: center; gap: 10px; }
+.bar-label { font-size: 0.78rem; color: var(--ink-mid); font-family: var(--font-ui); width: 80px; flex-shrink: 0; text-align: right; }
+.bar-track { flex: 1; background: var(--surface-alt); border-radius: 99px; overflow: hidden; height: 10px; }
+.bar-fill { height: 100%; border-radius: 99px; transition: width 0.6s ease; }
+.bar-count { font-size: 0.72rem; color: var(--ink-muted); font-family: var(--font-ui); width: 24px; }
+
+/* stats row */
+.stats-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 14px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.stat-value { font-family: var(--font); font-size: 1.8rem; color: var(--ink); line-height: 1; }
+.stat-label { font-size: 0.7rem; color: var(--ink-muted); font-family: var(--font-ui); line-height: 1.3; }
+
+/* mood sparkline */
+.sparkline-wrap { position: relative; height: 60px; }
+.sparkline-wrap svg { width: 100%; height: 100%; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── Mock data ──────────────────────────────────────────────────────────────
+const MOCK_CHAT = [
+  { role: 'assistant', text: "Hello. How are you feeling today?", time: "10:02" },
+  { role: 'user',      text: "A bit tired honestly. Had trouble sleeping last night.", time: "10:04" },
+  { role: 'assistant', text: "I'm sorry to hear that. Sleep disruptions can really affect how we feel throughout the day. Is there something on your mind that might have kept you awake?", time: "10:04" },
+  { role: 'user',      text: "Work stuff mostly. Big presentation next week.", time: "10:05" },
+  { role: 'assistant', text: "That kind of anticipatory stress is completely natural — it shows you care about doing well. Would it help to talk through what worries you most about it?", time: "10:05" },
+];
+
+const MOCK_ENTRIES = [
+  { id:1, mode:'journal', text:"Woke up early and watched the sunrise from the window. There's something about those quiet morning moments that feels sacred — like the world belongs only to you.", time:"7:14 AM", date:"Today",     valence:0.72, category:'content',    tags:['peaceful','present'] },
+  { id:2, mode:'chat',    text:"Talked through my worries about the presentation. Feeling a bit better after putting it into words.",                                                              time:"10:05 AM",date:"Today",     valence:0.45, category:'anxious',    tags:['work','uncertain'] },
+  { id:3, mode:'journal', text:"Called mum today for the first time in weeks. She sounded happy. I felt guilty for not calling sooner, but also grateful that she's doing well.",                time:"3:22 PM", date:"Yesterday", valence:0.60, category:'grateful',   tags:['family','connection'] },
+  { id:4, mode:'reflect', text:"Realized I've been avoiding the gym because I'm associating it with a stressful period. That's an interesting pattern I hadn't noticed before.",                 time:"8:40 PM", date:"Yesterday", valence:0.38, category:'reflective', tags:['insight','patterns'] },
+  { id:5, mode:'journal', text:"Rain all day. Made soup. Read half a book. One of those slow days that feels both empty and full at the same time.",                                              time:"6:55 PM", date:"Apr 16",    valence:0.58, category:'melancholy', tags:['quiet','solitude'] },
+];
+
+const CATEGORY_META = {
+  content:    { color: '#6BAF88', bg: '#EDF7F2' },
+  anxious:    { color: '#C4846A', bg: '#F7EDEA' },
+  grateful:   { color: '#7EA672', bg: '#EEF5ED' },
+  reflective: { color: '#7880C0', bg: '#EEEEF7' },
+  melancholy: { color: '#7B9DC0', bg: '#EEF2F7' },
+};
+
+const REFLECT_TOPICS = [
+  { icon: 'trend',   color: 'var(--neg)',      bgColor: 'var(--neg-bg)',      title: "Sleep & energy patterns", sub: "You've mentioned tiredness 5× this week. Let's explore what's underneath it." },
+  { icon: 'heart',   color: 'var(--positive)', bgColor: 'var(--positive-bg)', title: "Connections & closeness", sub: "Your entries mention family and longing for connection more than usual lately." },
+  { icon: 'loop',    color: 'var(--reflect)',   bgColor: 'var(--reflect-bg)',  title: "Avoidance patterns",     sub: "A recurring theme: delaying things that matter. Worth examining?" },
+  { icon: 'free',    color: 'var(--ink-mid)',   bgColor: 'var(--surface-alt)', title: "Something else",         sub: "Tell me what's on your mind right now." },
+];
+
+// ── Heatmap data ───────────────────────────────────────────────────────────
+function buildHeatmap() {
+  const cells = [];
+  const now = new Date(2026, 3, 19); // Apr 19 2026
+  for (let i = 55; i >= 0; i--) {
+    const d = new Date(now); d.setDate(d.getDate() - i);
+    const has = Math.random() > 0.38;
+    cells.push({
+      date: d,
+      valence:   has ? (Math.random() * 0.8 + 0.1) : null,
+      intensity: has ? (Math.random() * 0.6 + 0.4) : null,
+    });
+  }
+  return cells;
+}
+const HEATMAP = buildHeatmap();
+
+function moodColor(valence, intensity = 0.8) {
+  if (valence === null) return null;
+  if (valence > 0.6)       return `oklch(0.60 0.10 145 / ${intensity})`;
+  if (valence > 0.4)       return `oklch(0.68 0.06 75  / ${intensity})`;
+  return                          `oklch(0.55 0.09 20  / ${intensity})`;
+}
+
+// ── Icons ──────────────────────────────────────────────────────────────────
+function Icon({ name, size = 20, ...rest }) {
+  const paths = {
+    home:     <><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></>,
+    pen:      <><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></>,
+    chat:     <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>,
+    clock:    <><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></>,
+    pulse:    <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>,
+    back:     <polyline points="15 18 9 12 15 6"/>,
+    send:     <><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></>,
+    mic:      <><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v4M8 23h8"/></>,
+    trend:    <><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></>,
+    heart:    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>,
+    loop:     <><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></>,
+    free:     <><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></>,
+    sparkle:  <><path d="M12 2l2.4 7.4H22l-6.2 4.5 2.4 7.4L12 17l-6.2 4.3 2.4-7.4L2 9.4h7.6z"/></>,
+  };
+  return (
+    <svg viewBox="0 0 24 24" width={size} height={size} stroke="currentColor" fill="none"
+         strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" {...rest}>
+      {paths[name]}
+    </svg>
+  );
+}
+
+// ── Page transition wrapper ─────────────────────────────────────────────────
+function Page({ id, active, children }) {
+  const cls = ['page', active ? 'active' : ''].join(' ');
+  return <div className={cls} data-screen-label={id}>{children}</div>;
+}
+
+// ── Nav ────────────────────────────────────────────────────────────────────
+function Nav({ page, go }) {
+  const items = [
+    { id: 'home',     icon: 'home',  label: 'Home' },
+    { id: 'journal',  icon: 'pen',   label: 'Journal' },
+    { id: 'reflect',  icon: 'chat',  label: 'Reflect' },
+    { id: 'history',  icon: 'clock', label: 'History' },
+    { id: 'insights', icon: 'pulse', label: 'Insights' },
+  ];
+  return (
+    <div className="nav-pill">
+      {items.map(it => (
+        <button key={it.id} className={`nav-btn ${page === it.id ? 'active' : ''}`} onClick={() => go(it.id)}>
+          <Icon name={it.icon} size={20}/>
+          <span>{it.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ── HOME ───────────────────────────────────────────────────────────────────
+function HomePage({ go }) {
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const streakDays = [true,true,true,false,true,true,true];
+  return (
+    <>
+      <div className="home-orb"/>
+      <div className="page-scroll">
+        <div className="home-body">
+          <div className="home-greeting">
+            <div className="home-greeting-eyebrow">{greeting}</div>
+            <h1>What's alive<br/><em>within</em> you?</h1>
+            <p>Sunday, April 19 · Everything stays on this device.</p>
+          </div>
+
+          <div className="home-grid">
+            <div className="home-card wide" onClick={() => go('journal')}>
+              <div className="home-card-icon icon-journal" style={{width:38,height:38,borderRadius:12}}><Icon name="pen" size={17}/></div>
+              <div>
+                <div className="home-card-label">Journal</div>
+                <div className="home-card-desc">Write your thoughts privately — no response, just space for you.</div>
+              </div>
+            </div>
+            <div className="home-card wide" onClick={() => go('reflect')}>
+              <div className="home-card-icon icon-reflect" style={{width:38,height:38,borderRadius:12}}><Icon name="chat" size={17}/></div>
+              <div>
+                <div className="home-card-label">Reflect</div>
+                <div className="home-card-desc">Talk freely or explore guided topics drawn from your past entries.</div>
+              </div>
+            </div>
+            <div className="home-card" onClick={() => go('history')}>
+              <div className="home-card-icon icon-chat"><Icon name="clock" size={18}/></div>
+              <div>
+                <div className="home-card-label">History</div>
+                <div className="home-card-desc">Browse your past entries by timeline or calendar.</div>
+              </div>
+            </div>
+            <div className="home-card" onClick={() => go('insights')}>
+              <div className="home-card-icon icon-insights"><Icon name="pulse" size={18}/></div>
+              <div>
+                <div className="home-card-label">Insights</div>
+                <div className="home-card-desc">Mood heatmap and emotional patterns over time.</div>
+              </div>
+            </div>
+          </div>
+
+          <div style={{display:'flex', alignItems:'center', gap:8, marginTop:8, padding:'10px 14px', background:'var(--surface)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)'}}>
+            <div style={{display:'flex', gap:4}}>
+              {streakDays.map((f,i) => <div key={i} className={`streak-dot ${f?'filled':''}`}/>)}
+            </div>
+            <div style={{fontSize:'0.75rem', color:'var(--ink-mid)', fontFamily:'var(--font-ui)', marginLeft:4}}>
+              <strong style={{color:'var(--ink)'}}>7-day streak</strong> — keep going
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── JOURNAL ────────────────────────────────────────────────────────────────
+function JournalPage({ go }) {
+  const [text, setText] = useState('');
+  const [saved, setSaved] = useState(false);
+  const [toastKey, setToastKey] = useState(0);
+  const [recording, setRecording] = useState(false);
+  const [imgSrc, setImgSrc] = useState(null);
+  const imgInputRef = useRef(null);
+  const recTimerRef = useRef(null);
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
+  const today = new Date().toLocaleDateString('en-US', { weekday:'long', month:'long', day:'numeric' });
+
+  function save() {
+    if (!text.trim() && !imgSrc) return;
+    setSaved(true);
+    setToastKey(k => k + 1);
+    setTimeout(() => setSaved(false), 3000);
+  }
+
+  function toggleRec() {
+    if (recording) {
+      clearTimeout(recTimerRef.current);
+      setRecording(false);
+      setText(t => t + (t ? '\n' : '') + '[Voice note transcribed: "Felt really calm this morning, almost meditative."]');
+    } else {
+      setRecording(true);
+      recTimerRef.current = setTimeout(() => {
+        setRecording(false);
+        setText(t => t + (t ? '\n' : '') + '[Voice note transcribed: "Felt really calm this morning, almost meditative."]');
+      }, 3000);
+    }
+  }
+
+  function onImagePicked(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setImgSrc(url);
+    e.target.value = '';
+  }
+
+  return (
+    <>
+      <div className="header">
+        <button className="header-back" onClick={() => go('home')}><Icon name="back" size={22}/></button>
+        <span className="header-title">Journal</span>
+      </div>
+      {imgSrc && (
+        <div className="img-preview-strip visible" style={{paddingTop:8}}>
+          <div className="img-preview-strip-inner">
+            <img src={imgSrc} alt="attachment"/>
+            <button className="img-preview-remove" onClick={() => setImgSrc(null)}>×</button>
+          </div>
+        </div>
+      )}
+      <div className="journal-body">
+        <div className="journal-meta">{today}</div>
+        <textarea
+          className="journal-textarea"
+          placeholder="What's on your mind today? Write freely — this is just for you."
+          value={text}
+          onChange={e => setText(e.target.value)}
+        />
+      </div>
+      <div className="journal-footer">
+        <button className={`media-btn ${recording ? 'recording' : ''}`} onClick={toggleRec} title={recording ? 'Stop recording' : 'Voice note'}>
+          <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v4M8 23h8"/></svg>
+        </button>
+        <button className="media-btn" onClick={() => imgInputRef.current.click()} title="Attach photo">
+          <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+        </button>
+        <input ref={imgInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={onImagePicked}/>
+        <div className="word-count">{words > 0 ? `${words} word${words !== 1 ? 's' : ''}` : ''}</div>
+        <button className="journal-save-btn" onClick={save} disabled={!text.trim() && !imgSrc}>
+          Save entry
+        </button>
+      </div>
+      {saved && <div key={toastKey} className="journal-saved-toast">Entry saved ✓</div>}
+    </>
+  );
+}
+
+// ── HISTORY ────────────────────────────────────────────────────────────────
+function HistoryPage({ go }) {
+  const [view, setView] = useState('timeline');
+
+  return (
+    <>
+      <div className="header">
+        <button className="header-back" onClick={() => go('home')}><Icon name="back" size={22}/></button>
+        <span className="header-title">History</span>
+      </div>
+      <div className="history-toggle">
+        <button className={`toggle-opt ${view==='timeline'?'active':''}`} onClick={() => setView('timeline')}>Timeline</button>
+        <button className={`toggle-opt ${view==='calendar'?'active':''}`} onClick={() => setView('calendar')}>Calendar</button>
+      </div>
+      <div className="page-scroll">
+        {view === 'timeline' ? <TimelineView/> : <CalendarView/>}
+      </div>
+    </>
+  );
+}
+
+function TimelineView() {
+  const groups = [
+    { label: 'Today', items: MOCK_ENTRIES.filter(e => e.date === 'Today') },
+    { label: 'Yesterday', items: MOCK_ENTRIES.filter(e => e.date === 'Yesterday') },
+    { label: 'Apr 16', items: MOCK_ENTRIES.filter(e => e.date === 'Apr 16') },
+  ];
+  return (
+    <div className="timeline">
+      {groups.map(g => g.items.length > 0 && (
+        <React.Fragment key={g.label}>
+          <div className="tl-date-label">{g.label}</div>
+          {g.items.map(entry => {
+            const cm = CATEGORY_META[entry.category] || CATEGORY_META.content;
+            return (
+              <div key={entry.id} className="tl-item">
+                <div className="tl-dot-wrap">
+                  <div className="tl-dot" style={{background: cm.color}}/>
+                </div>
+                <div className="tl-card">
+                  <div className="tl-meta">
+                    <span className={`tl-mode-chip chip-${entry.mode}`}>
+                      {entry.mode}
+                    </span>
+                    <span className="tl-time">{entry.time}</span>
+                  </div>
+                  <div className="tl-text">{entry.text}</div>
+                  <div className="tl-tags">
+                    {entry.tags.map(t => <span key={t} className="tl-tag">{t}</span>)}
+                  </div>
+                  <div className="mood-bar">
+                    <div className="mood-fill" style={{width:`${entry.valence*100}%`, background: cm.color}}/>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </React.Fragment>
+      ))}
+    </div>
+  );
+}
+
+function CalendarView() {
+  const [selDay, setSelDay] = useState(null);
+  const days = ['S','M','T','W','T','F','S'];
+
+  // Build April 2026 calendar
+  const firstDay = new Date(2026, 3, 1).getDay(); // 3 = Wednesday
+  const daysInMonth = 30;
+  const cells = [];
+  for (let i = 0; i < firstDay; i++) cells.push(null);
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d);
+
+  // Mock mood per day
+  const moods = {};
+  [2,3,5,7,8,9,11,14,15,16,17,18,19].forEach(d => {
+    moods[d] = { valence: Math.random()*0.8+0.1, intensity: 0.7 };
+  });
+
+  return (
+    <div className="cal-body">
+      <div className="cal-month">April 2026</div>
+      <div className="cal-grid">
+        {days.map(d => <div key={d} className="cal-header">{d}</div>)}
+        {cells.map((d, i) => {
+          if (!d) return <div key={`e${i}`} className="cal-day empty"/>;
+          const m = moods[d];
+          const color = m ? moodColor(m.valence, m.intensity) : null;
+          return (
+            <div
+              key={d}
+              className={`cal-day ${m?'has-mood':''} ${d===19?'today':''} ${selDay===d?'selected':''}`}
+              style={color ? {background: color} : {}}
+              onClick={() => setSelDay(d === selDay ? null : d)}
+            >{d}</div>
+          );
+        })}
+      </div>
+      {selDay && moods[selDay] && (
+        <div style={{marginTop:16, background:'var(--surface)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', padding:'14px 16px'}}>
+          <div style={{fontSize:'0.72rem', fontWeight:600, textTransform:'uppercase', letterSpacing:'0.07em', color:'var(--ink-muted)', fontFamily:'var(--font-ui)', marginBottom:8}}>April {selDay}</div>
+          <div style={{fontFamily:'var(--font)', fontSize:'0.9rem', color:'var(--ink-mid)', lineHeight:1.6}}>
+            {selDay === 19 ? "Woke up early and watched the sunrise. Quiet morning moments feel sacred."
+            : selDay === 18 ? "Talked through my worries about the presentation. Feeling better after."
+            : "A reflective day. Noticing patterns in how I respond to stress."}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── REFLECT ────────────────────────────────────────────────────────────────
+function ReflectPage({ go }) {
+  const [phase, setPhase] = useState('loading');
+  const [chatMessages, setChatMessages] = useState([]);
+  const [topic, setTopic] = useState(null);
+  const [input, setInput] = useState('');
+  const [typing, setTyping] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const [imgSrc, setImgSrc] = useState(null);
+  const logRef = useRef(null);
+  const imgInputRef = useRef(null);
+  const recTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (phase === 'loading') {
+      setTimeout(() => setPhase('topics'), 2200);
+    }
+  }, [phase]);
+
+  useEffect(() => {
+    if (logRef.current) logRef.current.scrollTop = logRef.current.scrollHeight;
+  }, [chatMessages, typing]);
+
+  function pickTopic(t) {
+    setTopic(t);
+    setPhase('chat');
+    setChatMessages([{ role:'assistant', text: `Let's explore "${t.title}". ${t.sub}\n\nWhat feels most present for you around this right now?` }]);
+  }
+
+  function send() {
+    if (!input.trim() || typing) return;
+    const userMsg = { role:'user', text: input.trim() };
+    setChatMessages(m => [...m, userMsg]);
+    setInput('');
+    setTyping(true);
+    setTimeout(() => {
+      setTyping(false);
+      setChatMessages(m => [...m, { role:'assistant', text:"That's a meaningful observation. Looking back at your entries over the past two weeks, I notice a similar thread around this. What do you think is driving it?" }]);
+    }, 1800);
+  }
+
+  function restart() {
+    setPhase('loading');
+    setChatMessages([]);
+    setTopic(null);
+    setInput('');
+    setImgSrc(null);
+    setRecording(false);
+  }
+
+  function toggleRec() {
+    if (recording) {
+      clearTimeout(recTimerRef.current);
+      setRecording(false);
+      setInput(v => v + (v ? ' ' : '') + '"Felt really anxious about it, honestly."');
+    } else {
+      setRecording(true);
+      recTimerRef.current = setTimeout(() => {
+        setRecording(false);
+        setInput(v => v + (v ? ' ' : '') + '"Felt really anxious about it, honestly."');
+      }, 3000);
+    }
+  }
+
+  function onImagePicked(e) {
+    const file = e.target.files[0];
+    if (!file) return;
+    setImgSrc(URL.createObjectURL(file));
+    e.target.value = '';
+  }
+
+  return (
+    <>
+      <div className="header">
+        <button className="header-back" onClick={() => go('home')}><Icon name="back" size={22}/></button>
+        <span className="header-title">Reflect</span>
+        {phase !== 'loading' && (
+          <button className="header-action" onClick={restart}>New</button>
+        )}
+      </div>
+
+      {phase === 'loading' && (
+        <div className="reflect-loading">
+          <div className="reflect-spinner"/>
+          <div className="reflect-loading-text">Reading your recent entries…</div>
+        </div>
+      )}
+
+      {phase === 'topics' && (
+        <>
+          <div className="reflect-intro">
+            <p>Here's what stood out from your entries lately. What would you like to explore?</p>
+          </div>
+          <div className="reflect-topics">
+            <div className="reflect-topics-label">Suggested topics</div>
+            {REFLECT_TOPICS.map((t, i) => (
+              <button key={i} className="reflect-topic-btn" onClick={() => pickTopic(t)}>
+                <div className="reflect-topic-icon" style={{background: t.bgColor, color: t.color}}>
+                  <Icon name={t.icon} size={16}/>
+                </div>
+                <div>
+                  <div className="reflect-topic-title">{t.title}</div>
+                  <div className="reflect-topic-sub">{t.sub}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+
+      {phase === 'chat' && (
+        <>
+          <div className="reflect-chat-log" ref={logRef}>
+            {chatMessages.map((m, i) => (
+              <div key={i} className={`bubble-row bubble-row-${m.role}`}>
+                <div className={`bubble bubble-${m.role}`}>{m.text}</div>
+              </div>
+            ))}
+            {typing && (
+              <div className="bubble-row bubble-row-assistant">
+                <div className="chat-typing">
+                  <div className="typing-dot"/><div className="typing-dot"/><div className="typing-dot"/>
+                </div>
+              </div>
+            )}
+          </div>
+          {imgSrc && (
+            <div className="img-preview-strip visible" style={{padding:'0 16px 6px'}}>
+              <div className="img-preview-strip-inner">
+                <img src={imgSrc} alt="attachment"/>
+                <button className="img-preview-remove" onClick={() => setImgSrc(null)}>×</button>
+              </div>
+            </div>
+          )}
+          <div className="chat-input-area">
+            <button className={`media-btn ${recording ? 'recording' : ''}`} onClick={toggleRec} title={recording ? 'Stop' : 'Voice'}>
+              <svg viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 19v4M8 23h8"/></svg>
+            </button>
+            <button className="media-btn" onClick={() => imgInputRef.current.click()} title="Attach photo">
+              <svg viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </button>
+            <input ref={imgInputRef} type="file" accept="image/*" style={{display:'none'}} onChange={onImagePicked}/>
+            <textarea
+              className="chat-input"
+              rows={1}
+              placeholder="Share your thoughts…"
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }}}
+            />
+            <button className="send-btn" onClick={send} disabled={!input.trim() || typing}>
+              <Icon name="send" size={15}/>
+            </button>
+          </div>
+        </>
+      )}
+    </>
+  );
+}
+
+// ── INSIGHTS ───────────────────────────────────────────────────────────────
+function InsightsPage({ go }) {
+  const categories = [
+    { label:'Grateful',   count:18, color:'var(--positive)' },
+    { label:'Content',    count:14, color:'oklch(0.62 0.08 75)' },
+    { label:'Anxious',    count:11, color:'var(--neg)' },
+    { label:'Reflective', count:9,  color:'var(--reflect)' },
+    { label:'Melancholy', count:6,  color:'oklch(0.55 0.07 230)' },
+  ];
+  const maxCount = Math.max(...categories.map(c => c.count));
+
+  // Build heatmap weeks
+  const weeks = [];
+  let week = [];
+  const startPad = HEATMAP[0].date.getDay();
+  for (let i = 0; i < startPad; i++) week.push(null);
+  HEATMAP.forEach(cell => {
+    week.push(cell);
+    if (week.length === 7) { weeks.push(week); week = []; }
+  });
+  if (week.length) { while (week.length < 7) week.push(null); weeks.push(week); }
+
+  // Sparkline for last 14 days
+  const last14 = HEATMAP.slice(-14).filter(c => c.valence !== null);
+  const svgW = 330, svgH = 60;
+  const points = last14.map((c, i) => {
+    const x = (i / (last14.length - 1)) * svgW;
+    const y = svgH - c.valence * svgH * 0.8 - 4;
+    return `${x},${y}`;
+  }).join(' ');
+
+  return (
+    <>
+      <div className="header">
+        <button className="header-back" onClick={() => go('home')}><Icon name="back" size={22}/></button>
+        <span className="header-title">Insights</span>
+      </div>
+      <div className="page-scroll">
+        <div className="insights-body">
+
+          {/* Stats */}
+          <div className="insights-section">
+            <div className="stats-row">
+              <div className="stat-card">
+                <div className="stat-value">38</div>
+                <div className="stat-label">entries this month</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value">7</div>
+                <div className="stat-label">day streak</div>
+              </div>
+              <div className="stat-card">
+                <div className="stat-value" style={{fontSize:'1.5rem', color:'var(--positive)'}}>↑14%</div>
+                <div className="stat-label">mood vs. last month</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Mood trend */}
+          <div className="insights-section">
+            <div className="insights-section-title">Mood over 14 days</div>
+            <div className="insights-section-sub">Valence score from your entries — higher is more positive</div>
+            <div className="sparkline-wrap" style={{background:'var(--surface)', border:'1px solid var(--border)', borderRadius:'var(--radius-sm)', padding:'10px 14px'}}>
+              <svg viewBox={`0 0 ${svgW} ${svgH}`} preserveAspectRatio="none" style={{width:'100%',height:60}}>
+                <defs>
+                  <linearGradient id="sparkGrad" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="oklch(0.48 0.07 45)" stopOpacity="0.25"/>
+                    <stop offset="100%" stopColor="oklch(0.48 0.07 45)" stopOpacity="0"/>
+                  </linearGradient>
+                </defs>
+                {last14.length > 1 && (
+                  <>
+                    <polyline points={points} fill="none" stroke="oklch(0.48 0.07 45)" strokeWidth="2" strokeLinejoin="round" strokeLinecap="round"/>
+                    <polygon points={`0,${svgH} ${points} ${svgW},${svgH}`} fill="url(#sparkGrad)"/>
+                  </>
+                )}
+              </svg>
+            </div>
+          </div>
+
+          {/* Heatmap */}
+          <div className="insights-section">
+            <div className="insights-section-title">Entry heatmap</div>
+            <div className="insights-section-sub">Warm = positive · cool = negative · opacity = intensity</div>
+            <div className="heatmap-wrap">
+              <div className="heatmap-grid">
+                <div className="heatmap-dow-labels">
+                  {['','M','','W','','F',''].map((d,i) => <span key={i}>{d}</span>)}
+                </div>
+                {weeks.map((wk, wi) => (
+                  <div key={wi} className="heatmap-week">
+                    {wk.map((cell, di) => {
+                      if (!cell) return <div key={di} className="heatmap-cell" style={{background:'transparent'}}/>;
+                      const c = cell.valence !== null ? moodColor(cell.valence, cell.intensity) : null;
+                      return <div key={di} className="heatmap-cell" style={c ? {background:c} : {}}/>;
+                    })}
+                  </div>
+                ))}
+              </div>
+              <div className="heatmap-legend">
+                <div className="legend-item"><div className="legend-dot" style={{background:'oklch(0.55 0.09 20)'}}/> Low mood</div>
+                <div className="legend-item"><div className="legend-dot" style={{background:'oklch(0.68 0.06 75)'}}/> Neutral</div>
+                <div className="legend-item"><div className="legend-dot" style={{background:'oklch(0.60 0.10 145)'}}/> Positive</div>
+              </div>
+            </div>
+          </div>
+
+          {/* Category breakdown */}
+          <div className="insights-section">
+            <div className="insights-section-title">Emotion breakdown</div>
+            <div className="insights-section-sub">Which emotional categories appear most in your entries</div>
+            <div className="bar-chart">
+              {categories.map(c => (
+                <div key={c.label} className="bar-row">
+                  <div className="bar-label">{c.label}</div>
+                  <div className="bar-track">
+                    <div className="bar-fill" style={{width:`${(c.count/maxCount)*100}%`, background:c.color}}/>
+                  </div>
+                  <div className="bar-count">{c.count}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </>
+  );
+}
+
+// ── APP ────────────────────────────────────────────────────────────────────
+const PAGE_ORDER = ['home','journal','history','insights','reflect'];
+
+function App() {
+  const [page, setPage] = useState(() => localStorage.getItem('within_page') || 'home');
+
+  function go(p) {
+    if (p === page) return;
+    setPage(p);
+    localStorage.setItem('within_page', p);
+  }
+
+  const pageProps = { go };
+  const pages = [
+    { id:'home',     el: <HomePage     {...pageProps}/> },
+    { id:'journal',  el: <JournalPage  {...pageProps}/> },
+    { id:'history',  el: <HistoryPage  {...pageProps}/> },
+    { id:'insights', el: <InsightsPage {...pageProps}/> },
+    { id:'reflect',  el: <ReflectPage  {...pageProps}/> },
+  ];
+
+  return (
+    <div style={{position:'relative', width:'100%', height:'100%', overflow:'hidden'}}>
+      <div className="pages">
+        {pages.map(p => (
+          <Page key={p.id} id={p.id} active={p.id === page}>
+            {p.el}
+          </Page>
+        ))}
+      </div>
+      <Nav page={page} go={go}/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+
+// ── Tweaks ────────────────────────────────────────────────────────────────
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accentColor": "oklch(0.48 0.07 45)",
+  "bgColor": "oklch(0.97 0.012 75)",
+  "fontHeading": "DM Serif Display",
+  "darkMode": false
+}/*EDITMODE-END*/;
+
+(function() {
+  function applyTweaks(t) {
+    document.documentElement.style.setProperty('--accent', t.accentColor);
+    document.documentElement.style.setProperty('--accent-dim', t.accentColor);
+    document.documentElement.style.setProperty('--bg', t.bgColor);
+    document.documentElement.style.setProperty('--font', `'${t.fontHeading}', Georgia, serif`);
+    if (t.darkMode) {
+      document.documentElement.style.setProperty('--bg', 'oklch(0.14 0.01 60)');
+      document.documentElement.style.setProperty('--surface', 'oklch(0.18 0.01 60)');
+      document.documentElement.style.setProperty('--surface-alt', 'oklch(0.22 0.01 60)');
+      document.documentElement.style.setProperty('--ink', 'oklch(0.92 0.01 75)');
+      document.documentElement.style.setProperty('--ink-mid', 'oklch(0.70 0.015 70)');
+      document.documentElement.style.setProperty('--ink-muted', 'oklch(0.52 0.015 70)');
+      document.documentElement.style.setProperty('--border', 'oklch(0.28 0.01 60)');
+      document.documentElement.style.setProperty('--border-soft', 'oklch(0.24 0.01 60)');
+    } else {
+      document.documentElement.style.removeProperty('--surface');
+      document.documentElement.style.removeProperty('--surface-alt');
+      document.documentElement.style.removeProperty('--ink');
+      document.documentElement.style.removeProperty('--ink-mid');
+      document.documentElement.style.removeProperty('--ink-muted');
+      document.documentElement.style.removeProperty('--border');
+      document.documentElement.style.removeProperty('--border-soft');
+    }
+  }
+  applyTweaks(TWEAK_DEFAULTS);
+
+  let panel;
+  function buildPanel() {
+    if (panel) return;
+    panel = document.createElement('div');
+    panel.style.cssText = 'position:fixed;bottom:100px;right:16px;background:white;border:1px solid #e0d8d0;border-radius:16px;padding:16px;box-shadow:0 8px 32px rgba(0,0,0,0.15);z-index:9999;width:220px;font-family:Inter,sans-serif;font-size:13px;display:none;';
+    panel.innerHTML = `
+      <div style="font-weight:600;margin-bottom:12px;color:#2c2016;">Tweaks</div>
+      <label style="display:block;margin-bottom:10px;color:#6b5d4f;">
+        Accent color
+        <input type="color" id="tw-accent" style="display:block;width:100%;margin-top:4px;height:32px;border:none;border-radius:8px;cursor:pointer;"/>
+      </label>
+      <label style="display:flex;align-items:center;gap:8px;margin-bottom:10px;color:#6b5d4f;cursor:pointer;">
+        <input type="checkbox" id="tw-dark" style="width:16px;height:16px;"/>
+        Dark mode
+      </label>
+      <label style="display:block;margin-bottom:4px;color:#6b5d4f;">
+        Heading font
+        <select id="tw-font" style="display:block;width:100%;margin-top:4px;padding:6px 8px;border:1px solid #e0d8d0;border-radius:8px;font-size:12px;">
+          <option value="DM Serif Display">DM Serif Display</option>
+          <option value="Georgia">Georgia</option>
+          <option value="Palatino Linotype">Palatino</option>
+        </select>
+      </label>`;
+    document.body.appendChild(panel);
+
+    // Wire controls
+    const cur = Object.assign({}, TWEAK_DEFAULTS);
+    const accentInput = panel.querySelector('#tw-accent');
+    const darkInput = panel.querySelector('#tw-dark');
+    const fontInput = panel.querySelector('#tw-font');
+    accentInput.value = '#8B6F5E';
+    darkInput.checked = cur.darkMode;
+    fontInput.value = cur.fontHeading;
+
+    function post() { window.parent.postMessage({type:'__edit_mode_set_keys', edits: {...cur}}, '*'); }
+    accentInput.oninput = e => { cur.accentColor = e.target.value; applyTweaks(cur); post(); };
+    darkInput.onchange  = e => { cur.darkMode = e.target.checked; applyTweaks(cur); post(); };
+    fontInput.onchange  = e => { cur.fontHeading = e.target.value; applyTweaks(cur); post(); };
+  }
+
+  window.addEventListener('message', e => {
+    if (e.data?.type === '__activate_edit_mode')   { buildPanel(); panel.style.display = 'block'; }
+    if (e.data?.type === '__deactivate_edit_mode') { if (panel) panel.style.display = 'none'; }
+  });
+  window.parent.postMessage({type:'__edit_mode_available'}, '*');
+})();
+</script>
+</body>
+</html>

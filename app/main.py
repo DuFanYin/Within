@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import tempfile
 import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
@@ -30,7 +31,7 @@ from .db import (
 )
 from .corpus import export_corpus_incremental, _corpus_cursor
 from .chat import chat_stream_sync
-from .emotion import extract_emotion_sync, summarize_sync, tone_summary_sync, image_caption_sync
+from .emotion import extract_emotion_sync, summarize_sync, tone_summary_sync, image_caption_sync, insight_narrative_sync
 from .reflect import reflect_open_sync, reflect_agent_sync
 from .engine import warmup_sync
 from .transcribe import transcribe_bytes_sync
@@ -78,21 +79,8 @@ def _to_pcm_int16(audio_bytes: bytes, suffix: str = ".webm") -> bytes:
         Path(dst_path).unlink(missing_ok=True)
 
 
-def _drain_chat_tokens(
-    token_q: "queue.Queue[str | None]",
-    future,
-) -> tuple[list[str], "asyncio.Future"]:
-    """Helper type alias — actual draining is inline in each generator."""
-    pass  # not used; kept for documentation
-
-
-app = FastAPI(title="Within")
-app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
-templates = Jinja2Templates(directory=str(ROOT / "templates"))
-
-
-@app.on_event("startup")
-async def startup() -> None:
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     AUDIO_DIR.mkdir(parents=True, exist_ok=True)
     IMAGE_DIR.mkdir(parents=True, exist_ok=True)
     init_db()
@@ -101,6 +89,12 @@ async def startup() -> None:
     asyncio.create_task(_archiver_loop())
     asyncio.create_task(_audio_processor_loop())
     asyncio.create_task(_image_processor_loop())
+    yield
+
+
+app = FastAPI(title="Within", lifespan=lifespan)
+app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
+templates = Jinja2Templates(directory=str(ROOT / "templates"))
 
 
 async def _warmup() -> None:
@@ -460,9 +454,81 @@ async def reflect_voice(
     file: UploadFile = File(...),
     session_id: str | None = None,
     topic_type: str = "just_chat",
+    topic_label: str = "",
+    topic_question: str = "",
+    rag_query: str = "",
 ) -> StreamingResponse:
-    """Voice input for the Reflect page (just_chat mode). Delegates to _voice_chat_stream."""
-    return await _voice_chat_stream(file, session_id, mode="chat")
+    """
+    Voice input for Reflect. For just_chat falls back to plain voice chat.
+    For all other topic types: transcribes audio then routes through reflect_agent_sync
+    so the response is grounded in the user's past entries.
+    """
+    if topic_type == "just_chat" or not topic_label:
+        return await _voice_chat_stream(file, session_id, mode="chat")
+
+    audio = await file.read()
+    orig_name = file.filename or "audio.webm"
+    suffix = "." + orig_name.rsplit(".", 1)[-1]
+
+    try:
+        pcm_data = await asyncio.to_thread(_to_pcm_int16, audio, suffix)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    transcript = await asyncio.to_thread(transcribe_bytes_sync, audio, suffix)
+    if not transcript:
+        # fallback: use Gemma 4 native audio via plain chat if transcription fails
+        return await _voice_chat_stream(file, session_id, mode="reflect")
+
+    unique_name = f"{uuid.uuid4().hex}{suffix}"
+    dest = (ROOT / "data" / "audio") / unique_name
+    dest.write_bytes(audio)
+    audio_id = await asyncio.to_thread(save_audio_file, unique_name, len(audio), None)
+
+    history: list[dict] = [{"role": "user", "content": transcript}]
+    token_q: queue.Queue[str | None] = queue.Queue()
+
+    async def generate_reflect_voice():
+        loop = asyncio.get_event_loop()
+        future = loop.run_in_executor(
+            None, reflect_agent_sync,
+            topic_label, topic_question, rag_query, history, token_q,
+        )
+        full_parts: list[str] = []
+        while True:
+            try:
+                token = token_q.get(timeout=0.05)
+            except queue.Empty:
+                await asyncio.sleep(0)
+                continue
+            if token is None:
+                break
+            if token.startswith("\x00TOOL:") and token.endswith("\x00"):
+                label = token[6:-1]
+                yield f"data: {json.dumps({'tool_call': label})}\n\n"
+                await asyncio.sleep(0)
+                continue
+            full_parts.append(token)
+            yield f"data: {json.dumps({'token': token})}\n\n"
+
+        result = await future
+        if result.get("error"):
+            yield f"data: {json.dumps({'error': result['error']})}\n\n"
+            return
+
+        reply = "".join(full_parts) or result.get("reply", "")
+        entry_id = await asyncio.to_thread(
+            save_entry, "reflect", "user", transcript, "voice", None, audio_id
+        )
+        asyncio.create_task(_tag_entry(entry_id, transcript))
+        asyncio.create_task(_sync_corpus())
+        yield f"data: {json.dumps({'done': True, 'reply': reply, 'transcript': transcript})}\n\n"
+
+    return StreamingResponse(
+        generate_reflect_voice(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 # ── /api/voice/stream ─────────────────────────────────────────────────────────
@@ -627,6 +693,22 @@ async def history(view: str = "timeline", day: str | None = None) -> dict:
 @app.get("/api/stats")
 async def stats() -> dict:
     return await asyncio.to_thread(get_stats)
+
+
+import time as _time
+_narrative_cache: dict = {"text": "", "expires": 0.0}
+
+@app.get("/api/insights/narrative")
+async def insights_narrative() -> dict:
+    now = _time.time()
+    if _narrative_cache["text"] and now < _narrative_cache["expires"]:
+        return {"narrative": _narrative_cache["text"]}
+    stats_data = await asyncio.to_thread(get_stats)
+    narrative = await asyncio.to_thread(insight_narrative_sync, stats_data)
+    if narrative:
+        _narrative_cache["text"] = narrative
+        _narrative_cache["expires"] = now + 3600
+    return {"narrative": narrative}
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

@@ -21,6 +21,11 @@ def export_corpus_incremental(entries: list[dict]) -> int:
     For voice entries, prefer transcript over empty content; append tone_summary
     as a separate labelled block so RAG can retrieve both what was said and how.
     Returns the new cursor (max id exported), or 0 if nothing new.
+
+    Note: Cactus builds its vector index from corpus/ at cactus_init (startup).
+    Entries written here after startup are on disk but not yet in the live index —
+    they become searchable on the next restart. For hot-updating the index,
+    use cactus_index_add() with the embedding from cactus_embed() after writing.
     """
     global _corpus_cursor
     if not entries:

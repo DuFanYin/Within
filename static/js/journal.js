@@ -2,6 +2,16 @@
 
 let _journalImageFile = null;
 
+document.addEventListener('DOMContentLoaded', () => {
+  const ta = document.getElementById('journal-textarea');
+  const wc = document.getElementById('journal-word-count');
+  if (!ta || !wc) return;
+  ta.addEventListener('input', () => {
+    const words = ta.value.trim() ? ta.value.trim().split(/\s+/).length : 0;
+    wc.textContent = words > 0 ? `${words} word${words !== 1 ? 's' : ''}` : '';
+  });
+});
+
 function onJournalImagePicked(input) {
   const file = input.files[0];
   if (!file) return;
@@ -13,9 +23,12 @@ function onJournalImagePicked(input) {
 
 function clearJournalImage() {
   _journalImageFile = null;
-  document.getElementById('journal-img-input').value = '';
-  document.getElementById('journal-img-thumb').src = '';
-  document.getElementById('journal-img-preview').classList.remove('visible');
+  const inp = document.getElementById('journal-img-input');
+  if (inp) inp.value = '';
+  const thumb = document.getElementById('journal-img-thumb');
+  if (thumb) thumb.src = '';
+  const preview = document.getElementById('journal-img-preview');
+  if (preview) preview.classList.remove('visible');
 }
 
 async function saveJournal() {

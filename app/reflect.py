@@ -9,7 +9,7 @@ import queue
 import re
 from typing import Any
 
-from .engine import _base_options, _run_complete, _get_model, _lock
+from .engine import _base_options, _run_complete, _get_model, _lock, rag_query
 
 # ── Tool schemas ──────────────────────────────────────────────────────────────
 
@@ -238,23 +238,32 @@ def _decide_insights(snapshots: list[dict]) -> list[dict]:
 
 # ── Tool execution ────────────────────────────────────────────────────────────
 
+def _rag_search(query: str) -> str:
+    """Vector search via Cactus RAG."""
+    if not query.strip():
+        return "No query provided."
+
+    try:
+        results = rag_query(query, top_k=6)
+    except Exception:
+        results = []
+
+    lines = []
+    for r in results:
+        doc = (r.get("document") or r.get("text") or r.get("content") or "").strip()
+        if doc:
+            lines.append(doc[:300])
+
+    return "\n\n".join(lines) if lines else "No relevant entries found."
+
+
 def _execute_tool(name: str, args: dict) -> str:
     """Execute a reflect agent tool call and return the result as a string."""
     from . import db as _db
     try:
         if name == "search_my_entries":
             query = str(args.get("query", ""))
-            days = int(args.get("days", 14))
-            days = min(max(days, 1), 60)
-            rows = _db.search_entries(query, days)
-            if not rows:
-                return "No entries found matching that query."
-            lines = []
-            for r in rows:
-                date = r.get("created_at", "")[:10]
-                content = (r.get("content") or "").strip()[:200]
-                lines.append(f"[{date}] {content}")
-            return "\n".join(lines)
+            return _rag_search(query)
         elif name == "get_mood_stats":
             days = int(args.get("days", 14))
             days = min(max(days, 1), 60)
@@ -414,15 +423,25 @@ def reflect_open_sync(snapshots: list[dict]) -> dict[str, Any]:
 
     decisions = _decide_insights(snapshots)
 
-    recent_entries = _db.search_entries("", days=7)
-    if not recent_entries:
-        recent_entries = _db.search_entries("", days=14)
+    # Use the top insight's rag_query for semantic retrieval; fall back to recency
+    greeting_query = decisions[0]["rag_query"] if decisions else "feeling"
+    try:
+        rag_results = rag_query(greeting_query, top_k=3) if greeting_query.strip() else []
+    except Exception:
+        rag_results = []
+
     snippets = []
-    for e in recent_entries[:3]:
-        content = (e.get("content") or "").strip()
-        if content:
-            date = e.get("created_at", "")[:10]
-            snippets.append(f"[{date}] {content[:150]}")
+    if rag_results:
+        for r in rag_results:
+            doc = (r.get("document") or r.get("text") or r.get("content") or "").strip()
+            if not doc:
+                continue
+            m = re.match(r'\[(\d{4}-\d{2}-\d{2})\]', doc)
+            date = m.group(1) if m else ""
+            content = re.sub(r'^\[.*?\]\s*(\[.*?\]\s*)?', '', doc).strip()[:150]
+            if content:
+                snippets.append(f"[{date}] {content}" if date else content)
+
     snippets_str = "\n".join(snippets) if snippets else "(no recent entries)"
 
     last = _db.get_last_reflect_summary()
@@ -482,7 +501,7 @@ def reflect_agent_sync(
     """
     query = rag_query or topic_label
     token_queue.put(f"\x00TOOL:🔍 Looking through your entries…\x00")
-    retrieved = _execute_tool("search_my_entries", {"query": query, "days": 14})
+    retrieved = _rag_search(query)
 
     system_content = (
         f"{_REFLECT_AGENT_SYSTEM}\n\n"

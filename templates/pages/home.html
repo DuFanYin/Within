@@ -1,39 +1,58 @@
-<div id="page-home" class="page active" style="justify-content:center;">
-  <div class="home-hero">
-    <div class="home-hero-icon">🌱</div>
-    <h1>Within</h1>
-    <p>Your private space.<br>Everything stays on this device.</p>
-  </div>
+<div id="page-home" class="page active">
+  <div class="home-orb"></div>
+  <div class="page-scroll">
+    <div class="home-body">
 
-  <div class="home-card" onclick="showPage('chat')">
-    <div class="home-card-icon">💬</div>
-    <div class="home-card-body">
-      <h2>Talk to me</h2>
-      <p>Have a conversation with an empathetic companion. Your messages are saved and understood.</p>
-    </div>
-  </div>
+      <div class="home-greeting">
+        <div class="home-greeting-eyebrow" id="home-greeting-text">Good morning</div>
+        <h1>What's alive<br><em>within</em> you?</h1>
+        <p id="home-date-text">Everything stays on this device.</p>
+      </div>
 
-  <div class="home-card" onclick="showPage('journal')">
-    <div class="home-card-icon">📓</div>
-    <div class="home-card-body">
-      <h2>Journal down</h2>
-      <p>Write or speak your thoughts privately. Saved without a response — just for you.</p>
-    </div>
-  </div>
+      <div class="home-grid">
+        <div class="home-card wide" onclick="showPage('journal')">
+          <div class="home-card-icon icon-journal">
+            <svg viewBox="0 0 24 24"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          </div>
+          <div>
+            <div class="home-card-label">Journal</div>
+            <div class="home-card-desc">Write your thoughts privately — no response, just space for you.</div>
+          </div>
+        </div>
+        <div class="home-card wide" onclick="showPage('reflect')">
+          <div class="home-card-icon icon-reflect">
+            <svg viewBox="0 0 24 24"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          </div>
+          <div>
+            <div class="home-card-label">Reflect</div>
+            <div class="home-card-desc">Talk freely or explore guided topics drawn from your past entries.</div>
+          </div>
+        </div>
+        <div class="home-card" onclick="showPage('history')">
+          <div class="home-card-icon icon-chat">
+            <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          </div>
+          <div>
+            <div class="home-card-label">History</div>
+            <div class="home-card-desc">Browse your past entries by timeline or calendar.</div>
+          </div>
+        </div>
+        <div class="home-card" onclick="showPage('insights')">
+          <div class="home-card-icon icon-insights">
+            <svg viewBox="0 0 24 24"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          </div>
+          <div>
+            <div class="home-card-label">Insights</div>
+            <div class="home-card-desc">Mood heatmap and emotional patterns over time.</div>
+          </div>
+        </div>
+      </div>
 
-  <div class="home-card" onclick="showPage('reflect')">
-    <div class="home-card-icon">🔍</div>
-    <div class="home-card-body">
-      <h2>Reflect</h2>
-      <p>Ask questions about your past entries. Understand your patterns and emotional journey over time.</p>
-    </div>
-  </div>
+      <div class="home-streak">
+        <div class="home-streak-dots" id="home-streak-dots"></div>
+        <div class="home-streak-text" id="home-streak-text"><strong>— day streak</strong></div>
+      </div>
 
-  <div class="home-card" onclick="showPage('insights')">
-    <div class="home-card-icon">✦</div>
-    <div class="home-card-body">
-      <h2>Insights</h2>
-      <p>See your emotional patterns over time — heatmap and your most frequent feelings.</p>
     </div>
   </div>
 </div>

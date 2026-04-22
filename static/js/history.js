@@ -6,8 +6,8 @@ function switchView(v) {
   historyView = v;
   document.getElementById('btn-timeline').classList.toggle('active', v === 'timeline');
   document.getElementById('btn-calendar').classList.toggle('active', v === 'calendar');
-  document.getElementById('view-timeline').style.display = v === 'timeline' ? 'flex' : 'none';
-  document.getElementById('view-calendar').style.display = v === 'calendar' ? 'flex' : 'none';
+  document.getElementById('view-timeline').style.display = v === 'timeline' ? 'block' : 'none';
+  document.getElementById('view-calendar').style.display = v === 'calendar' ? 'block' : 'none';
   loadHistory();
 }
 
@@ -148,7 +148,7 @@ function appendCalMosaicSegments(mosaic, categories, dayStr) {
 function valenceColor(v) {
   if (v === null || v === undefined) return 'var(--ink-muted)';
   if (v > 0.15) return 'var(--positive)';
-  if (v < -0.15) return 'var(--negative)';
+  if (v < -0.15) return 'var(--neg)';
   return 'var(--ink-muted)';
 }
 
@@ -160,163 +160,75 @@ function formatTime(iso) {
 
 // ── timeline ──────────────────────────────────────────────────────────────────
 
-let _tlItems     = [];
-let _tlActiveIdx = -1;
-let _tlScrollEl  = null;
-let _tlRafId     = null;
-
-function _teardownTimeline() {
-  if (_tlScrollEl) _tlScrollEl.removeEventListener('scroll', _onTlScroll);
-  if (_tlRafId)    cancelAnimationFrame(_tlRafId);
-  _tlItems     = [];
-  _tlActiveIdx = -1;
-  _tlScrollEl  = null;
-  _tlRafId     = null;
-}
-
-function _applyFocus(centerIdx) {
-  if (centerIdx === _tlActiveIdx) return;
-  _tlActiveIdx = centerIdx;
-  _tlItems.forEach((el, i) => {
-    const dist = Math.abs(i - centerIdx);
-    el.classList.toggle('tl-focus-0', dist === 0);
-    el.classList.toggle('tl-focus-1', dist === 1);
-    el.classList.toggle('tl-focus-x', dist > 1);
-  });
-}
-
-function _findCenter() {
-  if (!_tlScrollEl || !_tlItems.length) return;
-  const rootMid = _tlScrollEl.getBoundingClientRect().top + _tlScrollEl.clientHeight / 2;
-  let best = 0, bestDist = Infinity;
-  _tlItems.forEach((el, i) => {
-    const r = el.getBoundingClientRect();
-    const mid = r.top + r.height / 2;
-    const dist = Math.abs(mid - rootMid);
-    if (dist < bestDist) { bestDist = dist; best = i; }
-  });
-  _applyFocus(best);
-}
-
-function _onTlScroll() {
-  if (_tlRafId) cancelAnimationFrame(_tlRafId);
-  _tlRafId = requestAnimationFrame(() => { _findCenter(); _tlRafId = null; });
-}
-
-function _setupScroll(scrollRoot) {
-  _tlScrollEl = scrollRoot;
-  scrollRoot.addEventListener('scroll', _onTlScroll, { passive: true });
-}
+function _teardownTimeline() {}
+function _setupScroll() {}
 
 function renderTimelineItem(e, idx) {
+  const catMeta = e.category && CATEGORY_META[e.category] ? CATEGORY_META[e.category] : null;
+  const dotColor = catMeta ? catMeta.color : 'var(--border)';
+  const mode = e.mode || 'journal';
+  const modeLabel = mode.charAt(0).toUpperCase() + mode.slice(1);
+
+  const sourceIcon = e.source === 'voice' ? '<span style="font-size:0.75rem">🎙</span>'
+    : e.source === 'image' ? '<span style="font-size:0.75rem">📷</span>' : '';
+
+  const imgHtml = (e.source === 'image' && e.image_id)
+    ? `<img src="/api/image/${e.image_id}/file" style="width:100%;max-height:7rem;object-fit:cover;border-radius:var(--radius-xs);display:block;margin-bottom:6px;">`
+    : '';
+
+  const text = document.createElement('div');
+  text.className = 'tl-text';
+  text.textContent = e.content || '';
+
+  const subTags = (e.sub_tags || []).map(t => {
+    const s = document.createElement('span');
+    s.className = 'tl-tag';
+    s.textContent = t;
+    return s.outerHTML;
+  }).join('');
+  const tagsHtml = subTags ? `<div class="tl-tags">${subTags}</div>` : '';
+
+  const moodHtml = (e.valence != null)
+    ? `<div class="mood-bar"><div class="mood-fill" style="width:${Math.round(((e.valence + 1) / 2) * 100)}%;background:${dotColor}"></div></div>`
+    : '';
+
   const item = document.createElement('div');
   item.className = 'tl-item';
   item.dataset.idx = idx;
+  item.innerHTML = `
+    <div class="tl-dot-wrap"><div class="tl-dot" style="background:${dotColor}"></div></div>
+    <div class="tl-card">
+      <div class="tl-meta">
+        <span class="tl-mode-chip chip-${mode}">${modeLabel}</span>
+        ${sourceIcon}
+        <span class="tl-time">${formatTime(e.created_at)}</span>
+      </div>
+      ${imgHtml}
+    </div>`;
 
-  // ── left column: time axis ────────────────────────────────────────────────
-  const axis = document.createElement('div');
-  axis.className = 'tl-axis';
-
-  const line = document.createElement('div');
-  line.className = 'tl-axis-line';
-  axis.appendChild(line);
-
-  const dot = document.createElement('div');
-  dot.className = 'tl-axis-dot';
-  axis.appendChild(dot);
-
-  item.appendChild(axis);
-
-  // ── right column: content ─────────────────────────────────────────────────
-  const content = document.createElement('div');
-  content.className = 'tl-content';
-
-  // label row
-  const label = document.createElement('div');
-  label.className = 'tl-label';
-
-  const modeTag = document.createElement('span');
-  modeTag.className = 'tl-mode tl-mode-' + e.mode;
-  modeTag.textContent = e.mode === 'chat' ? 'Chat' : e.mode === 'reflect' ? 'Reflect' : 'Journal';
-  label.appendChild(modeTag);
-
-  if (e.source === 'voice') {
-    const s = document.createElement('span');
-    s.className = 'tl-source';
-    s.textContent = '🎙';
-    label.appendChild(s);
-  } else if (e.source === 'image') {
-    const s = document.createElement('span');
-    s.className = 'tl-source';
-    s.textContent = '📷';
-    label.appendChild(s);
-  }
-
-  if (e.category && CATEGORY_META[e.category]) {
-    const meta = CATEGORY_META[e.category];
-    const chip = document.createElement('span');
-    chip.className = 'tl-chip';
-    chip.textContent = meta.label;
-    chip.style.background = meta.color;
-    chip.style.color = meta.text;
-    label.appendChild(chip);
-  }
-
-  const time = document.createElement('span');
-  time.className = 'tl-time';
-  time.textContent = formatTime(e.created_at);
-  label.appendChild(time);
-
-  content.appendChild(label);
-
-  // preview
-  const preview = document.createElement('div');
-  preview.className = 'tl-preview';
-
-  if (e.source === 'image' && e.image_id) {
-    const img = document.createElement('img');
-    img.src = `/api/image/${e.image_id}/file`;
-    img.className = 'tl-preview-img';
-    img.alt = '';
-    preview.appendChild(img);
-    if (e.content) {
-      const note = document.createElement('div');
-      note.className = 'tl-preview-text';
-      note.textContent = e.content;
-      preview.appendChild(note);
-    }
-  } else if (e.source === 'voice') {
-    const txt = document.createElement('div');
-    txt.className = 'tl-preview-text';
-    txt.textContent = e.content || '🎙 Transcript processing…';
-    preview.appendChild(txt);
-    if (e.tone_summary) {
-      const tone = document.createElement('div');
-      tone.className = 'tl-preview-tone';
-      tone.textContent = e.tone_summary;
-      preview.appendChild(tone);
-    }
-  } else {
-    const txt = document.createElement('div');
-    txt.className = 'tl-preview-text';
-    txt.textContent = e.content || '';
-    preview.appendChild(txt);
-  }
-
-  if (e.sub_tags && e.sub_tags.length) {
-    const tags = document.createElement('div');
-    tags.className = 'tl-preview-tags';
-    e.sub_tags.forEach(t => {
-      const span = document.createElement('span');
-      span.className = 'tag-sub';
-      span.textContent = t;
-      tags.appendChild(span);
+  const card = item.querySelector('.tl-card');
+  card.appendChild(text);
+  if (tagsHtml) {
+    const tagsDiv = document.createElement('div');
+    tagsDiv.className = 'tl-tags';
+    (e.sub_tags || []).forEach(t => {
+      const s = document.createElement('span');
+      s.className = 'tl-tag';
+      s.textContent = t;
+      tagsDiv.appendChild(s);
     });
-    preview.appendChild(tags);
+    card.appendChild(tagsDiv);
   }
-
-  content.appendChild(preview);
-  item.appendChild(content);
+  if (moodHtml) {
+    const bar = document.createElement('div');
+    bar.className = 'mood-bar';
+    const fill = document.createElement('div');
+    fill.className = 'mood-fill';
+    fill.style.width = Math.round(((e.valence + 1) / 2) * 100) + '%';
+    fill.style.background = dotColor;
+    bar.appendChild(fill);
+    card.appendChild(bar);
+  }
 
   return item;
 }
@@ -325,8 +237,7 @@ async function loadTimeline(day) {
   _teardownTimeline();
 
   const container = document.getElementById('timeline');
-  const scrollRoot = document.getElementById('view-timeline');
-  container.innerHTML = '<div style="color:var(--ink-muted);font-size:.85rem;padding:.5rem 0 .5rem 2.5rem;">Loading…</div>';
+  container.innerHTML = '<div style="color:var(--ink-muted);font-size:.85rem;padding:.5rem 0 .5rem 1rem;">Loading…</div>';
 
   try {
     const url  = day ? `/api/history?day=${day}` : '/api/history';
@@ -339,16 +250,24 @@ async function loadTimeline(day) {
       return;
     }
 
-    _setupScroll(scrollRoot);
+    const today = new Date().toDateString();
+    const yesterday = new Date(Date.now() - 864e5).toDateString();
+    let lastLabel = null;
 
     data.entries.forEach((e, i) => {
+      const d = e.created_at ? new Date(e.created_at.endsWith('Z') ? e.created_at : e.created_at + 'Z') : null;
+      const ds = d ? d.toDateString() : null;
+      let groupLabel = ds === today ? 'Today' : ds === yesterday ? 'Yesterday' : d ? d.toLocaleDateString(undefined, { month:'short', day:'numeric' }) : null;
+      if (groupLabel && groupLabel !== lastLabel) {
+        lastLabel = groupLabel;
+        const lbl = document.createElement('div');
+        lbl.className = 'tl-date-label';
+        lbl.textContent = groupLabel;
+        container.appendChild(lbl);
+      }
       const el = renderTimelineItem(e, i);
       container.appendChild(el);
-      _tlItems.push(el);
     });
-
-    // Find center after layout
-    requestAnimationFrame(_findCenter);
 
   } catch (err) {
     container.innerHTML = `<div style="color:#f43f5e;font-size:.85rem;padding-left:2.5rem;">${err.message}</div>`;

@@ -42,6 +42,35 @@ def init_db() -> None:
                 c.execute("ALTER TABLE journal_entries ADD COLUMN image_id INTEGER REFERENCES image_files(id)")
             if "source" not in cols:
                 c.execute("ALTER TABLE journal_entries ADD COLUMN source TEXT NOT NULL DEFAULT 'text'")
+            # Widen mode CHECK to include 'reflect' — recreate table if old constraint is too narrow
+            create_sql = c.execute(
+                "SELECT sql FROM sqlite_master WHERE type='table' AND name='journal_entries'"
+            ).fetchone()
+            if create_sql and "'reflect'" not in create_sql[0]:
+                c.executescript("""
+                    ALTER TABLE journal_entries RENAME TO _journal_entries_old;
+                    CREATE TABLE journal_entries (
+                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                        created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
+                        mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal','reflect')),
+                        role        TEXT    NOT NULL CHECK(role IN ('user','assistant','summary')),
+                        content     TEXT    NOT NULL,
+                        source      TEXT    NOT NULL DEFAULT 'text' CHECK(source IN ('text','voice','image')),
+                        session_id  TEXT,
+                        audio_id    INTEGER REFERENCES audio_files(id),
+                        image_id    INTEGER REFERENCES image_files(id)
+                    );
+                    INSERT INTO journal_entries
+                        SELECT id, created_at,
+                               CASE WHEN mode NOT IN ('chat','journal','reflect') THEN 'chat' ELSE mode END,
+                               role, content, source, session_id, audio_id, image_id
+                        FROM _journal_entries_old;
+                    DROP TABLE _journal_entries_old;
+                    CREATE INDEX IF NOT EXISTS idx_entries_created ON journal_entries(created_at);
+                    CREATE INDEX IF NOT EXISTS idx_entries_session  ON journal_entries(session_id);
+                    CREATE INDEX IF NOT EXISTS idx_entries_audio    ON journal_entries(audio_id);
+                    CREATE INDEX IF NOT EXISTS idx_entries_image    ON journal_entries(image_id);
+                """)
         c.commit()
 
         c.executescript("""
@@ -67,7 +96,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS journal_entries (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-                mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal')),
+                mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal','reflect')),
                 role        TEXT    NOT NULL CHECK(role IN ('user','assistant','summary')),
                 content     TEXT    NOT NULL,
                 source      TEXT    NOT NULL DEFAULT 'text' CHECK(source IN ('text','voice','image')),
@@ -434,38 +463,6 @@ def get_history(view: str = "timeline", day: str | None = None) -> list[dict[str
 
 
 # ── agent tool backends ───────────────────────────────────────────────────────
-
-def search_entries(query: str, days: int = 14) -> list[dict[str, Any]]:
-    """
-    Full-text search over journal_entries.content within the last N days.
-    If query is empty, returns the most recent entries (recency scan).
-    Returns up to 8 entries: { created_at, mode, content, source }.
-    """
-    with _conn() as c:
-        if query.strip():
-            like = f"%{query}%"
-            rows = c.execute("""
-                SELECT created_at, mode, content, source
-                FROM journal_entries
-                WHERE role = 'user'
-                  AND content IS NOT NULL AND content != ''
-                  AND content LIKE ?
-                  AND created_at >= datetime('now', ? || ' days')
-                ORDER BY created_at DESC
-                LIMIT 8
-            """, (like, f"-{days}")).fetchall()
-        else:
-            rows = c.execute("""
-                SELECT created_at, mode, content, source
-                FROM journal_entries
-                WHERE role = 'user'
-                  AND content IS NOT NULL AND content != ''
-                  AND created_at >= datetime('now', ? || ' days')
-                ORDER BY created_at DESC
-                LIMIT 8
-            """, (f"-{days}",)).fetchall()
-    return [dict(r) for r in rows]
-
 
 def get_mood_stats_for_agent(days: int = 14) -> dict[str, Any]:
     """

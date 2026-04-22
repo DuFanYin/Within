@@ -1,30 +1,56 @@
 <div id="page-insights" class="page">
   <div class="page-header">
-    <button class="back-btn" onclick="showPage('home')">
-      <svg viewBox="0 0 24 24"><polyline points="15 18 9 12 15 6"/></svg>
-    </button>
     <span class="page-title">Insights</span>
   </div>
 
-  <div class="insights-body">
+  <div class="page-scroll">
+    <div class="insights-body">
 
-    <section class="insights-section">
-      <h3 class="insights-heading">Emotion Heatmap</h3>
-      <p class="insights-sub">Color shows mood (warm = positive, cool = negative). Opacity shows intensity.</p>
-      <div id="heatmap-wrap"></div>
-    </section>
+      <div class="insights-section" id="narrative-section" style="display:none">
+        <div id="insights-narrative" class="narrative-card"></div>
+      </div>
 
-    <section class="insights-section">
-      <h3 class="insights-heading">Emotion Breakdown</h3>
-      <p class="insights-sub">Which emotional categories show up most.</p>
-      <div id="categories-wrap"></div>
-    </section>
+      <div class="insights-section">
+        <div class="stats-row">
+          <div class="stat-card">
+            <div class="stat-value" id="stat-entries">—</div>
+            <div class="stat-label">entries this month</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-streak">—</div>
+            <div class="stat-label">day streak</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-mood" style="font-size:1.5rem; color:var(--positive);">—</div>
+            <div class="stat-label">mood vs. last month</div>
+          </div>
+        </div>
+      </div>
 
-    <section class="insights-section">
-      <h3 class="insights-heading">Your Most Common Feelings</h3>
-      <p class="insights-sub">Specific emotions from all tagged entries.</p>
-      <div id="tags-wrap"></div>
-    </section>
+      <div class="insights-section">
+        <div class="insights-section-title">Mood over 14 days</div>
+        <div class="insights-section-sub">Valence score from your entries — higher is more positive</div>
+        <div class="sparkline-wrap" id="sparkline-wrap"></div>
+      </div>
 
+      <div class="insights-section">
+        <div class="insights-section-title">Entry heatmap</div>
+        <div class="insights-section-sub">Warm = positive · cool = negative · opacity = intensity</div>
+        <div id="heatmap-wrap" class="heatmap-wrap"></div>
+      </div>
+
+      <div class="insights-section">
+        <div class="insights-section-title">Emotion breakdown</div>
+        <div class="insights-section-sub">Which emotional categories appear most in your entries</div>
+        <div id="categories-wrap"></div>
+      </div>
+
+      <div class="insights-section">
+        <div class="insights-section-title">Common feelings</div>
+        <div class="insights-section-sub">Specific emotions from all tagged entries</div>
+        <div id="tags-wrap"></div>
+      </div>
+
+    </div>
   </div>
 </div>

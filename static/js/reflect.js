@@ -55,11 +55,10 @@ function _loadCache() {
     _justChatSid   = c.justChatSid  || null;
     _chatHistory   = c.chatHistory  || [];
 
-    // Re-wire topic picker radio buttons (innerHTML loses event listeners)
+    // Lock topic picker (event listeners lost on innerHTML restore)
     const picker = log.querySelector('.reflect-topic-picker');
     if (picker && !picker.classList.contains('reflect-topic-picker--locked')) {
-      // Picker still active — easiest to just lock it since we can't recover topic refs
-      picker.querySelectorAll('input[type=radio]').forEach(r => r.disabled = true);
+      picker.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
       picker.classList.add('reflect-topic-picker--locked');
     }
 
@@ -161,32 +160,47 @@ function _appendTopicPicker(topics) {
   wrap.className = 'reflect-topic-picker';
 
   topics.forEach((topic, i) => {
-    const label = document.createElement('label');
-    label.className = 'reflect-topic-option';
+    const btn = document.createElement('button');
+    btn.className = 'reflect-topic-option';
+    btn.addEventListener('click', () => _pickTopic(topic, wrap, btn));
 
-    const radio = document.createElement('input');
-    radio.type  = 'radio';
-    radio.name  = 'reflect-topic';
-    radio.value = String(i);
-    radio.addEventListener('change', () => _pickTopic(topic, wrap));
+    const iconEl = document.createElement('div');
+    iconEl.className = 'reflect-topic-icon';
+    iconEl.style.background = topic.bgColor || 'var(--surface-alt)';
+    iconEl.style.color = topic.color || 'var(--ink-mid)';
+    iconEl.innerHTML = _topicIconSvg(topic.type);
 
-    const text = document.createElement('span');
-    text.textContent = topic.question || topic.label;
+    const textWrap = document.createElement('div');
+    const title = document.createElement('div');
+    title.className = 'reflect-topic-title';
+    title.textContent = topic.label;
+    const sub = document.createElement('div');
+    sub.className = 'reflect-topic-sub';
+    sub.textContent = topic.question || '';
+    textWrap.appendChild(title);
+    textWrap.appendChild(sub);
 
-    label.appendChild(radio);
-    label.appendChild(text);
-    wrap.appendChild(label);
+    btn.appendChild(iconEl);
+    btn.appendChild(textWrap);
+    wrap.appendChild(btn);
   });
 
   log.appendChild(wrap);
   log.scrollTop = log.scrollHeight;
 }
 
-function _pickTopic(topic, pickerEl) {
+function _topicIconSvg(type) {
+  if (type === 'just_chat') return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+  if (type === 'reflect')   return '<svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>';
+  return '<svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>';
+}
+
+function _pickTopic(topic, pickerEl, btnEl) {
   if (_topicPicked) return;
   _topicPicked = true;
 
-  pickerEl.querySelectorAll('input[type=radio]').forEach(r => r.disabled = true);
+  pickerEl.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
+  if (btnEl) btnEl.classList.add('selected');
   pickerEl.classList.add('reflect-topic-picker--locked');
 
   _activeTopic = topic;
@@ -282,14 +296,11 @@ function clearReflectAudio() {
   _reflectAudioBlob = null;
 }
 
-// Show/hide voice+image buttons — visible whenever input is open,
-// but only functional in just_chat mode (reflect topics hide them after pick)
+// Show/hide voice+image buttons — voice always available, image only for just_chat
 function _updateAttachButtons() {
-  const hideAttach = _activeTopic && _activeTopic.type !== 'just_chat';
-  const recBtn = document.getElementById('reflect-rec-btn');
+  const isReflect = _activeTopic && _activeTopic.type !== 'just_chat';
   const imgBtn = document.getElementById('reflect-img-btn');
-  if (recBtn) recBtn.classList.toggle('hidden', hideAttach);
-  if (imgBtn) imgBtn.classList.toggle('hidden', hideAttach);
+  if (imgBtn) imgBtn.classList.toggle('hidden', !!isReflect);
 }
 
 // ── main send ─────────────────────────────────────────────────────────────────
@@ -302,7 +313,7 @@ async function sendReflectChat() {
     // Lock the picker if still visible
     const picker = document.getElementById('reflect-topic-picker');
     if (picker) {
-      picker.querySelectorAll('input[type=radio]').forEach(r => r.disabled = true);
+      picker.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
       picker.classList.add('reflect-topic-picker--locked');
     }
     _updateAttachButtons();
@@ -336,6 +347,8 @@ async function sendReflectChat() {
   try {
     if (_activeTopic.type === 'just_chat') {
       await _sendJustChat({ text, hasImage, hasAudio, imageFile, audioBlob, thumbSrc, bubble, log, status });
+    } else if (hasAudio) {
+      await _sendReflectVoice({ audioBlob, bubble, log, status });
     } else {
       await _sendReflect({ text, bubble, log, status });
     }
@@ -415,6 +428,30 @@ async function _sendJustChat({ text, hasImage, hasAudio, imageFile, audioBlob, t
   }
 }
 
+// ── reflect voice send path ───────────────────────────────────────────────────
+
+async function _sendReflectVoice({ audioBlob, bubble, log, status }) {
+  _appendVoiceBubble();
+
+  const fd = new FormData();
+  fd.append('file', audioBlob, 'audio.webm');
+  fd.append('topic_type',     _activeTopic.type);
+  fd.append('topic_label',    _activeTopic.label);
+  fd.append('topic_question', _activeTopic.question || '');
+  fd.append('rag_query',      _activeTopic.rag_query || _activeTopic.label);
+
+  const res = await fetch('/api/reflect/voice', { method: 'POST', body: fd });
+  if (!res.ok) throw new Error(res.statusText);
+
+  const { reply, transcript } = await _streamInto(res, bubble, log, status);
+  if (transcript) {
+    _chatHistory.push({ role: 'user', content: transcript });
+  }
+  if (reply) {
+    _chatHistory.push({ role: 'assistant', content: reply });
+  }
+}
+
 // ── reflect send path ─────────────────────────────────────────────────────────
 
 async function _sendReflect({ text, bubble, log, status }) {
@@ -444,9 +481,10 @@ async function _sendReflect({ text, bubble, log, status }) {
 async function _streamInto(res, bubble, log, status) {
   const reader  = res.body.getReader();
   const decoder = new TextDecoder();
-  let buf   = '';
-  let reply = '';
-  let sid   = null;
+  let buf        = '';
+  let reply      = '';
+  let sid        = null;
+  let transcript = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -473,12 +511,13 @@ async function _streamInto(res, bubble, log, status) {
         log.scrollTop = log.scrollHeight;
       }
       if (payload.done) {
-        reply = payload.reply || reply;
-        sid   = payload.session_id || null;
+        reply      = payload.reply      || reply;
+        sid        = payload.session_id || null;
+        transcript = payload.transcript || null;
       }
     }
   }
-  return { reply, sid };
+  return { reply, sid, transcript };
 }
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────
@@ -549,10 +588,8 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   input.addEventListener('input', () => {
     input.style.height = 'auto';
-    const max = parseFloat(getComputedStyle(input).maxHeight);
+    const max = parseFloat(getComputedStyle(input).maxHeight) || 120;
     input.style.height = Math.min(input.scrollHeight, max) + 'px';
-    input.style.lineHeight = input.scrollHeight <= 40 ? 'var(--btn-h)' : '1.5';
     input.style.overflowY = input.scrollHeight > max ? 'auto' : 'hidden';
-    input.style.padding = input.scrollHeight <= 40 ? '0 0.75rem' : '0.625rem 0.75rem';
   });
 });

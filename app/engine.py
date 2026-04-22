@@ -188,6 +188,32 @@ def warmup_sync() -> None:
 _WARMUP_DONE = False
 
 
+def rag_query(query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    """
+    Semantic vector search over corpus using Cactus RAG.
+    Returns list of result dicts (containing 'document' key), or [] on failure.
+    Uses the same Gemma 4 model for embedding — all on-device.
+    """
+    _ensure_python_path()
+    try:
+        from src.cactus import cactus_rag_query as _rag
+    except ImportError as e:
+        raise RuntimeError(f"Failed to import cactus_rag_query: {e}") from e
+
+    _, _, _, model = _get_model()
+    with _lock:
+        raw = _rag(model, query, top_k)
+
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return []
+
+    if isinstance(parsed, list):
+        return parsed
+    return parsed.get("results", [])
+
+
 def shutdown_model() -> None:
     global _model, _weights_used
     with _lock:
