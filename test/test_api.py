@@ -57,11 +57,10 @@ def _small_png() -> bytes:
 
 def _small_webm() -> bytes:
     """
-    A minimal valid WebM container (~40 bytes).
-    ffmpeg will reject it; tests that call /api/voice/stream will see a 503.
+    A minimal valid WebM container (~9 bytes).
+    ffmpeg will reject it; tests that call /api/companion/voice will see a 503.
     For /api/voice (raw storage) it is accepted fine.
     """
-    # EBML header magic + minimal bytes
     return bytes([
         0x1A, 0x45, 0xDF, 0xA3,  # EBML ID
         0x84,                    # size = 4
@@ -110,12 +109,12 @@ async def test_journal_entry_appears_in_history(client):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POST /api/chat/stream  (real Gemma 4)
+# POST /api/companion/chat  (real Gemma 4)
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_chat_stream_returns_tokens(client):
-    r = await client.post("/api/chat/stream", json={"text": "Hello, how are you?"})
+async def test_companion_chat_returns_tokens(client):
+    r = await client.post("/api/companion/chat", json={"message": "Hello, how are you?"})
     assert r.status_code == 200
     events = _collect_sse(r.text)
     tokens = [e["token"] for e in events if "token" in e]
@@ -126,19 +125,19 @@ async def test_chat_stream_returns_tokens(client):
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_persists_session(client):
-    r1 = await client.post("/api/chat/stream", json={"text": "My name is Alex."})
-    sid = _collect_sse(r1.text)[-1]["session_id"]
+async def test_companion_chat_persists_session(client):
+    r1 = await client.post("/api/companion/chat", json={"message": "My name is Alex."})
+    sid = [e for e in _collect_sse(r1.text) if e.get("done")][0]["session_id"]
 
-    r2 = await client.post("/api/chat/stream", json={"text": "What is my name?", "session_id": sid})
+    r2 = await client.post("/api/companion/chat", json={"message": "What is my name?", "session_id": sid})
     events = _collect_sse(r2.text)
     full_reply = "".join(e.get("token", "") for e in events)
     assert "alex" in full_reply.lower(), "Model should recall the name from session history"
 
 
 @pytest.mark.asyncio
-async def test_chat_stream_rejects_empty(client):
-    r = await client.post("/api/chat/stream", json={"text": ""})
+async def test_companion_chat_rejects_empty(client):
+    r = await client.post("/api/companion/chat", json={"message": ""})
     assert r.status_code == 422
 
 
@@ -173,15 +172,15 @@ async def test_voice_journal_appears_in_history(client):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# POST /api/voice/stream  (chat — real Gemma 4 native audio)
+# POST /api/companion/voice  (native Gemma 4 audio)
 # Note: _small_webm() is not a valid audio stream, so ffmpeg will fail → 503.
 # Test that the error path is handled cleanly (no crash, correct status).
 # ─────────────────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_voice_stream_bad_audio_returns_503(client):
+async def test_companion_voice_bad_audio_returns_503(client):
     r = await client.post(
-        "/api/voice/stream",
+        "/api/companion/voice",
         files={"file": ("audio.webm", _small_webm(), "audio/webm")},
     )
     assert r.status_code == 503
@@ -276,7 +275,6 @@ async def test_history_calendar_view(client):
     assert r.status_code == 200
     data = r.json()["entries"]
     assert isinstance(data, list)
-    # each item has day + count
     if data:
         assert "day" in data[0]
         assert "count" in data[0]
@@ -308,40 +306,13 @@ async def test_stats_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_stats_after_chat(client):
-    # Chat generates mood_snapshots via _tag_entry (real Gemma 4)
-    await client.post("/api/chat/stream", json={"text": "I am feeling really stressed today."})
+async def test_stats_after_companion_chat(client):
+    await client.post("/api/companion/chat", json={"message": "I am feeling really stressed today."})
     r = await client.get("/api/stats")
     assert r.status_code == 200
-    # daily may still be empty if emotion tagging is async and hasn't run yet;
-    # just verify the shape is correct
     body = r.json()
     assert isinstance(body["daily"], list)
     assert isinstance(body["tags"], list)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# POST /api/reflect/stream  (RAG — real Gemma 4)
-# ─────────────────────────────────────────────────────────────────────────────
-
-@pytest.mark.asyncio
-async def test_reflect_stream_returns_response(client):
-    # Seed a journal entry first so corpus has something
-    await client.post("/api/journal", json={"text": "I went hiking and felt at peace."})
-
-    r = await client.post("/api/reflect/stream", json={"question": "When did I last feel at peace?"})
-    assert r.status_code == 200
-    events = _collect_sse(r.text)
-    tokens = [e["token"] for e in events if "token" in e]
-    done_events = [e for e in events if e.get("done")]
-    assert len(tokens) > 0
-    assert len(done_events) == 1
-
-
-@pytest.mark.asyncio
-async def test_reflect_stream_rejects_empty(client):
-    r = await client.post("/api/reflect/stream", json={"question": ""})
-    assert r.status_code == 422
 
 
 # ─────────────────────────────────────────────────────────────────────────────

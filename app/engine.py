@@ -173,10 +173,10 @@ def warmup_sync() -> None:
     global _WARMUP_DONE
     if _WARMUP_DONE:
         return
-    from .chat import _SYSTEM_PROMPT
+    from .agent import _COMPANION_SYSTEM
     cactus_complete, _, cactus_get_last_error, model = _get_model()
     messages = [
-        {"role": "system", "content": _SYSTEM_PROMPT},
+        {"role": "system", "content": _COMPANION_SYSTEM},
         {"role": "user", "content": "Hello"},
     ]
     options = {**_base_options(), "max_tokens": 1}

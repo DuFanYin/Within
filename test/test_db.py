@@ -28,13 +28,8 @@ def test_all_tables_created(tmp_path, monkeypatch):
     assert {"journal_entries", "mood_snapshots", "audio_files", "image_files"} <= tables
 
 
-def test_reflect_mode_accepted():
-    eid = db.save_entry("reflect", "user", "talked about stress")
-    assert isinstance(eid, int)
-
-
 def test_all_modes_accepted():
-    for mode in ("chat", "journal", "reflect"):
+    for mode in ("chat", "journal", "reflect", "companion"):
         eid = db.save_entry(mode, "user", f"entry for {mode}")
         assert eid > 0
 
@@ -170,6 +165,22 @@ def test_get_last_reflect_summary_returns_last():
     result = db.get_last_reflect_summary()
     assert result is not None
     assert "work stress" in result["content"]
+
+
+def test_get_last_reflect_summary_includes_companion_mode():
+    db.save_entry("companion", "user", "companion session entry")
+    result = db.get_last_reflect_summary()
+    assert result is not None
+    assert "companion session entry" in result["content"]
+
+
+def test_get_session_messages_companion_mode():
+    sid = "comp-sess"
+    db.save_entry("companion", "user", "hello companion", session_id=sid)
+    db.save_entry("companion", "assistant", "hi there", session_id=sid)
+    msgs = db.get_session_messages(sid)
+    assert len(msgs) == 2
+    assert msgs[0]["content"] == "hello companion"
 
 
 # ── audio records ─────────────────────────────────────────────────────────────

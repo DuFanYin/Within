@@ -30,9 +30,9 @@ from .db import (
     save_summary, get_corpus_entries, get_stats,
 )
 from .corpus import export_corpus_incremental, _corpus_cursor
-from .chat import chat_stream_sync
+from .agent import companion_agent_sync
 from .emotion import extract_emotion_sync, summarize_sync, tone_summary_sync, image_caption_sync, insight_narrative_sync
-from .reflect import reflect_open_sync, reflect_agent_sync
+from .reflect import reflect_open_sync
 from .engine import warmup_sync
 from .transcribe import transcribe_bytes_sync
 
@@ -214,10 +214,9 @@ async def warmup_endpoint() -> dict:
 
 # ── request models ────────────────────────────────────────────────────────────
 
-class ChatBody(BaseModel):
-    text: str = Field(..., min_length=1, max_length=8000)
+class CompanionBody(BaseModel):
+    message: str = Field(..., min_length=1, max_length=4000)
     session_id: str | None = None
-    source: str = "text"
 
 
 class JournalBody(BaseModel):
@@ -225,32 +224,24 @@ class JournalBody(BaseModel):
     source: str = "text"
 
 
-# ── SSE helpers ───────────────────────────────────────────────────────────────
+# ── /api/companion/chat ───────────────────────────────────────────────────────
 
-async def _stream_chat_sse(
-    token_q: "queue.Queue[str | None]",
-    future,
-) -> tuple[list[str], dict]:
-    """Drain token_q into a list; return (parts, meta_result). Not a generator — called inline."""
-    # This is a placeholder for documentation; actual draining is inlined below.
-    pass
-
-
-# ── /api/chat/stream ──────────────────────────────────────────────────────────
-
-@app.post("/api/chat/stream")
-async def chat_stream(body: ChatBody) -> StreamingResponse:
-    """
-    SSE endpoint: yields tokens as `data: <json>\n\n` lines.
-    Final event: `data: {"done": true, "session_id": "...", "meta": {...}}\n\n`
-    """
+@app.post("/api/companion/chat")
+async def companion_chat(body: CompanionBody) -> StreamingResponse:
+    """SSE endpoint: companion agentic chat. Yields tokens then done event."""
     session_id = body.session_id or str(uuid.uuid4())
-    history = await asyncio.to_thread(get_session_messages, session_id)
+    history, snapshots = await asyncio.gather(
+        asyncio.to_thread(get_session_messages, session_id),
+        asyncio.to_thread(get_recent_mood, 7),
+    )
     token_q: queue.Queue[str | None] = queue.Queue()
 
     async def generate():
         loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(None, chat_stream_sync, body.text, history, token_q)
+        future = loop.run_in_executor(
+            None, companion_agent_sync,
+            body.message, history, snapshots, token_q,
+        )
         full_parts: list[str] = []
         while True:
             try:
@@ -260,25 +251,98 @@ async def chat_stream(body: ChatBody) -> StreamingResponse:
                 continue
             if token is None:
                 break
+            if token.startswith("\x00TOOL:") and token.endswith("\x00"):
+                yield f"data: {json.dumps({'tool_call': token[6:-1]})}\n\n"
+                continue
             full_parts.append(token)
             yield f"data: {json.dumps({'token': token})}\n\n"
 
-        meta_result = await future
-        full_reply = "".join(full_parts)
-        if meta_result.get("error"):
-            yield f"data: {json.dumps({'error': meta_result['error']})}\n\n"
+        result = await future
+        reply = "".join(full_parts) or result.get("reply", "")
+        if result.get("error"):
+            yield f"data: {json.dumps({'error': result['error']})}\n\n"
             return
 
         user_id = await asyncio.to_thread(
-            save_entry, "chat", "user", body.text, body.source, session_id
+            save_entry, "companion", "user", body.message, "text", session_id
         )
-        await asyncio.to_thread(save_entry, "chat", "assistant", full_reply, "text", session_id)
-        asyncio.create_task(_tag_entry(user_id, body.text))
+        await asyncio.to_thread(
+            save_entry, "companion", "assistant", reply, "text", session_id
+        )
+        asyncio.create_task(_tag_entry(user_id, body.message))
+        asyncio.create_task(_sync_corpus())
 
-        done_payload: dict = {"done": True, "session_id": session_id}
-        if meta_result.get("meta"):
-            done_payload["meta"] = meta_result["meta"]
-        yield f"data: {json.dumps(done_payload)}\n\n"
+        yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'reply': reply})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+# ── /api/companion/voice ──────────────────────────────────────────────────────
+
+@app.post("/api/companion/voice")
+async def companion_voice(
+    file: UploadFile = File(...),
+    session_id: str | None = None,
+) -> StreamingResponse:
+    """Voice input for the companion. Passes PCM natively to Gemma 4 — no ASR round-trip."""
+    audio = await file.read()
+    suffix = "." + (file.filename or "audio.webm").rsplit(".", 1)[-1]
+
+    try:
+        pcm_data = await asyncio.to_thread(_to_pcm_int16, audio, suffix)
+    except RuntimeError as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+    unique_name = f"{uuid.uuid4().hex}{suffix}"
+    (AUDIO_DIR / unique_name).write_bytes(audio)
+    audio_id = await asyncio.to_thread(save_audio_file, unique_name, len(audio), None)
+
+    sid = session_id or str(uuid.uuid4())
+    history, snapshots = await asyncio.gather(
+        asyncio.to_thread(get_session_messages, sid),
+        asyncio.to_thread(get_recent_mood, 7),
+    )
+    token_q: queue.Queue[str | None] = queue.Queue()
+
+    async def generate():
+        loop = asyncio.get_event_loop()
+        future = loop.run_in_executor(
+            None, companion_agent_sync,
+            "", history, snapshots, token_q, pcm_data,
+        )
+        full_parts: list[str] = []
+        while True:
+            try:
+                token = token_q.get(timeout=0.05)
+            except queue.Empty:
+                await asyncio.sleep(0)
+                continue
+            if token is None:
+                break
+            if token.startswith("\x00TOOL:") and token.endswith("\x00"):
+                yield f"data: {json.dumps({'tool_call': token[6:-1]})}\n\n"
+                continue
+            full_parts.append(token)
+            yield f"data: {json.dumps({'token': token})}\n\n"
+
+        result = await future
+        reply = "".join(full_parts) or result.get("reply", "")
+        if result.get("error"):
+            yield f"data: {json.dumps({'error': result['error']})}\n\n"
+            return
+
+        user_id = await asyncio.to_thread(
+            save_entry, "companion", "user", "", "voice", sid, audio_id
+        )
+        await asyncio.to_thread(save_entry, "companion", "assistant", reply, "text", sid)
+        asyncio.create_task(_tag_entry(user_id, ""))
+        asyncio.create_task(_sync_corpus())
+
+        yield f"data: {json.dumps({'done': True, 'session_id': sid, 'reply': reply})}\n\n"
 
     return StreamingResponse(
         generate(),
@@ -333,271 +397,6 @@ async def reflect_open() -> StreamingResponse:
             return
 
         yield f"data: {json.dumps({'result': result})}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-# ── /api/reflect/chat ─────────────────────────────────────────────────────────
-
-class ReflectChatBody(BaseModel):
-    topic_label: str = Field(..., min_length=1, max_length=200)
-    topic_question: str = Field(default="", max_length=300)
-    rag_query: str = Field(default="", max_length=200)
-    topic_type: str = Field(default="pattern")
-    history: list[dict] = Field(default_factory=list)
-    user_message: str = Field(..., min_length=1, max_length=2000)
-    session_id: str | None = None
-
-
-@app.post("/api/reflect/chat")
-async def reflect_chat(body: ReflectChatBody) -> StreamingResponse:
-    """
-    One reflect conversation turn.
-    - topic_type='just_chat': delegates to chat_stream_sync (session continuity, saved as mode='chat').
-    - all other types: reflect_agent_sync (RAG-grounded, saved as mode='reflect').
-    """
-    token_q: queue.Queue[str | None] = queue.Queue()
-
-    if body.topic_type == "just_chat":
-        session_id = body.session_id or str(uuid.uuid4())
-        history = await asyncio.to_thread(get_session_messages, session_id)
-
-        async def generate_chat():
-            loop = asyncio.get_event_loop()
-            future = loop.run_in_executor(None, chat_stream_sync, body.user_message, history, token_q)
-            full_parts: list[str] = []
-            while True:
-                try:
-                    token = token_q.get(timeout=0.05)
-                except queue.Empty:
-                    await asyncio.sleep(0)
-                    continue
-                if token is None:
-                    break
-                full_parts.append(token)
-                yield f"data: {json.dumps({'token': token})}\n\n"
-
-            meta_result = await future
-            full_reply = "".join(full_parts)
-            if meta_result.get("error"):
-                yield f"data: {json.dumps({'error': meta_result['error']})}\n\n"
-                return
-
-            user_id = await asyncio.to_thread(
-                save_entry, "chat", "user", body.user_message, "text", session_id
-            )
-            await asyncio.to_thread(save_entry, "chat", "assistant", full_reply, "text", session_id)
-            asyncio.create_task(_tag_entry(user_id, body.user_message))
-
-            done_payload: dict = {"done": True, "session_id": session_id, "reply": full_reply}
-            if meta_result.get("meta"):
-                done_payload["meta"] = meta_result["meta"]
-            yield f"data: {json.dumps(done_payload)}\n\n"
-
-        return StreamingResponse(
-            generate_chat(),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-        )
-
-    history = body.history + [{"role": "user", "content": body.user_message}]
-
-    async def generate_reflect():
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(
-            None, reflect_agent_sync,
-            body.topic_label, body.topic_question, body.rag_query, history, token_q,
-        )
-        full_parts: list[str] = []
-        while True:
-            try:
-                token = token_q.get(timeout=0.05)
-            except queue.Empty:
-                await asyncio.sleep(0)
-                continue
-            if token is None:
-                break
-            if token.startswith("\x00TOOL:") and token.endswith("\x00"):
-                label = token[6:-1]
-                yield f"data: {json.dumps({'tool_call': label})}\n\n"
-                await asyncio.sleep(0)
-                continue
-            full_parts.append(token)
-            yield f"data: {json.dumps({'token': token})}\n\n"
-
-        result = await future
-        if result.get("error"):
-            yield f"data: {json.dumps({'error': result['error']})}\n\n"
-            return
-
-        reply = "".join(full_parts) or result.get("reply", "")
-        asyncio.create_task(asyncio.to_thread(
-            save_entry, "reflect", "user", body.user_message, "text", None
-        ))
-        yield f"data: {json.dumps({'done': True, 'reply': reply})}\n\n"
-
-    return StreamingResponse(
-        generate_reflect(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-# ── /api/reflect/voice ────────────────────────────────────────────────────────
-
-@app.post("/api/reflect/voice")
-async def reflect_voice(
-    file: UploadFile = File(...),
-    session_id: str | None = None,
-    topic_type: str = "just_chat",
-    topic_label: str = "",
-    topic_question: str = "",
-    rag_query: str = "",
-) -> StreamingResponse:
-    """
-    Voice input for Reflect. For just_chat falls back to plain voice chat.
-    For all other topic types: transcribes audio then routes through reflect_agent_sync
-    so the response is grounded in the user's past entries.
-    """
-    if topic_type == "just_chat" or not topic_label:
-        return await _voice_chat_stream(file, session_id, mode="chat")
-
-    audio = await file.read()
-    orig_name = file.filename or "audio.webm"
-    suffix = "." + orig_name.rsplit(".", 1)[-1]
-
-    try:
-        pcm_data = await asyncio.to_thread(_to_pcm_int16, audio, suffix)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-    transcript = await asyncio.to_thread(transcribe_bytes_sync, audio, suffix)
-    if not transcript:
-        # fallback: use Gemma 4 native audio via plain chat if transcription fails
-        return await _voice_chat_stream(file, session_id, mode="reflect")
-
-    unique_name = f"{uuid.uuid4().hex}{suffix}"
-    dest = (ROOT / "data" / "audio") / unique_name
-    dest.write_bytes(audio)
-    audio_id = await asyncio.to_thread(save_audio_file, unique_name, len(audio), None)
-
-    history: list[dict] = [{"role": "user", "content": transcript}]
-    token_q: queue.Queue[str | None] = queue.Queue()
-
-    async def generate_reflect_voice():
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(
-            None, reflect_agent_sync,
-            topic_label, topic_question, rag_query, history, token_q,
-        )
-        full_parts: list[str] = []
-        while True:
-            try:
-                token = token_q.get(timeout=0.05)
-            except queue.Empty:
-                await asyncio.sleep(0)
-                continue
-            if token is None:
-                break
-            if token.startswith("\x00TOOL:") and token.endswith("\x00"):
-                label = token[6:-1]
-                yield f"data: {json.dumps({'tool_call': label})}\n\n"
-                await asyncio.sleep(0)
-                continue
-            full_parts.append(token)
-            yield f"data: {json.dumps({'token': token})}\n\n"
-
-        result = await future
-        if result.get("error"):
-            yield f"data: {json.dumps({'error': result['error']})}\n\n"
-            return
-
-        reply = "".join(full_parts) or result.get("reply", "")
-        entry_id = await asyncio.to_thread(
-            save_entry, "reflect", "user", transcript, "voice", None, audio_id
-        )
-        asyncio.create_task(_tag_entry(entry_id, transcript))
-        asyncio.create_task(_sync_corpus())
-        yield f"data: {json.dumps({'done': True, 'reply': reply, 'transcript': transcript})}\n\n"
-
-    return StreamingResponse(
-        generate_reflect_voice(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
-
-
-# ── /api/voice/stream ─────────────────────────────────────────────────────────
-
-@app.post("/api/voice/stream")
-async def voice_stream(
-    file: UploadFile = File(...),
-    session_id: str | None = None,
-) -> StreamingResponse:
-    """Multimodal voice chat (Gemma 4 native audio). Streams reply as SSE."""
-    return await _voice_chat_stream(file, session_id, mode="chat")
-
-
-async def _voice_chat_stream(
-    file: UploadFile,
-    session_id: str | None,
-    mode: str = "chat",
-) -> StreamingResponse:
-    """
-    Shared implementation for voice SSE endpoints.
-    Converts audio → PCM, saves file, streams reply tokens, persists entries.
-    """
-    audio = await file.read()
-    orig_name = file.filename or "audio.webm"
-    suffix = "." + orig_name.rsplit(".", 1)[-1]
-
-    try:
-        pcm_data = await asyncio.to_thread(_to_pcm_int16, audio, suffix)
-    except RuntimeError as e:
-        raise HTTPException(status_code=503, detail=str(e))
-
-    unique_name = f"{uuid.uuid4().hex}{suffix}"
-    dest = AUDIO_DIR / unique_name
-    dest.write_bytes(audio)
-    audio_id = await asyncio.to_thread(save_audio_file, unique_name, len(audio), None)
-
-    sid = session_id or str(uuid.uuid4())
-    history = await asyncio.to_thread(get_session_messages, sid)
-    token_q: queue.Queue[str | None] = queue.Queue()
-
-    async def generate():
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(None, chat_stream_sync, "", history, token_q, pcm_data)
-        full_parts: list[str] = []
-        while True:
-            try:
-                token = token_q.get(timeout=0.05)
-            except queue.Empty:
-                await asyncio.sleep(0)
-                continue
-            if token is None:
-                break
-            full_parts.append(token)
-            yield f"data: {json.dumps({'token': token})}\n\n"
-
-        meta_result = await future
-        full_reply = "".join(full_parts)
-        if meta_result.get("error"):
-            yield f"data: {json.dumps({'error': meta_result['error']})}\n\n"
-            return
-
-        await asyncio.to_thread(save_entry, mode, "user", "", "voice", sid, audio_id)
-        await asyncio.to_thread(save_entry, mode, "assistant", full_reply, "text", sid)
-        asyncio.create_task(_sync_corpus())
-
-        done_payload: dict = {"done": True, "session_id": sid, "reply": full_reply}
-        if meta_result.get("meta"):
-            done_payload["meta"] = meta_result["meta"]
-        yield f"data: {json.dumps(done_payload)}\n\n"
 
     return StreamingResponse(
         generate(),

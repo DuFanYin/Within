@@ -46,13 +46,13 @@ def init_db() -> None:
             create_sql = c.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name='journal_entries'"
             ).fetchone()
-            if create_sql and "'reflect'" not in create_sql[0]:
+            if create_sql and ("'reflect'" not in create_sql[0] or "'companion'" not in create_sql[0]):
                 c.executescript("""
                     ALTER TABLE journal_entries RENAME TO _journal_entries_old;
                     CREATE TABLE journal_entries (
                         id          INTEGER PRIMARY KEY AUTOINCREMENT,
                         created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-                        mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal','reflect')),
+                        mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal','reflect','companion')),
                         role        TEXT    NOT NULL CHECK(role IN ('user','assistant','summary')),
                         content     TEXT    NOT NULL,
                         source      TEXT    NOT NULL DEFAULT 'text' CHECK(source IN ('text','voice','image')),
@@ -62,7 +62,7 @@ def init_db() -> None:
                     );
                     INSERT INTO journal_entries
                         SELECT id, created_at,
-                               CASE WHEN mode NOT IN ('chat','journal','reflect') THEN 'chat' ELSE mode END,
+                               CASE WHEN mode NOT IN ('chat','journal','reflect','companion') THEN 'chat' ELSE mode END,
                                role, content, source, session_id, audio_id, image_id
                         FROM _journal_entries_old;
                     DROP TABLE _journal_entries_old;
@@ -96,7 +96,7 @@ def init_db() -> None:
             CREATE TABLE IF NOT EXISTS journal_entries (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-                mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal','reflect')),
+                mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal','reflect','companion')),
                 role        TEXT    NOT NULL CHECK(role IN ('user','assistant','summary')),
                 content     TEXT    NOT NULL,
                 source      TEXT    NOT NULL DEFAULT 'text' CHECK(source IN ('text','voice','image')),
@@ -251,7 +251,7 @@ def get_session_messages(session_id: str, limit: int = 20) -> list[dict[str, Any
     with _conn() as c:
         rows = c.execute(
             """SELECT role, content FROM journal_entries
-               WHERE session_id = ? AND mode = 'chat'
+               WHERE session_id = ? AND mode IN ('chat', 'companion')
                ORDER BY id DESC LIMIT ?""",
             (session_id, limit),
         ).fetchall()
@@ -523,7 +523,7 @@ def get_last_reflect_summary() -> dict[str, Any] | None:
             SELECT content, created_at
             FROM journal_entries
             WHERE role = 'user'
-              AND mode = 'reflect'
+              AND mode IN ('reflect', 'companion')
               AND content IS NOT NULL AND content != ''
               AND created_at >= datetime('now', '-30 days')
             ORDER BY created_at DESC

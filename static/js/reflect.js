@@ -3,39 +3,34 @@
 // ── state ─────────────────────────────────────────────────────────────────────
 
 let _activeTopic   = null;   // { label, question, rag_query, type }
-let _chatHistory   = [];     // [{ role, content }] — used for reflect path
 let _topicPicked   = false;
-let _justChatSid   = null;   // session_id for just_chat continuity
+let _companionSid  = null;   // session_id for all companion turns
 
 let _reflectImageFile = null;
 let _reflectAudioBlob = null;  // set by recording.js
 
 // Expose to recording.js
 Object.defineProperty(window, '_reflectSessionId', {
-  get: () => _justChatSid,
+  get: () => _companionSid,
   configurable: true,
 });
 
 // ── sessionStorage cache ──────────────────────────────────────────────────────
 
-const _CACHE_KEY = 'reflect_cache_v1';
+const _CACHE_KEY = 'companion_cache_v1';
 
 function _saveCache() {
-  // Don't cache mid-stream (empty streaming bubble would restore broken)
   const log = document.getElementById('reflect-chat-log');
   if (!log) return;
-  // Strip streaming bubbles before saving
   const clone = log.cloneNode(true);
   clone.querySelectorAll('.bubble-streaming').forEach(el => el.closest('.bubble-row')?.remove());
-  // Don't cache if only the step indicator is present (still loading)
   if (clone.querySelector('.reflect-open-step')) return;
   try {
     sessionStorage.setItem(_CACHE_KEY, JSON.stringify({
-      html:        clone.innerHTML,
-      activeTopic: _activeTopic,
-      topicPicked: _topicPicked,
-      justChatSid: _justChatSid,
-      chatHistory: _chatHistory,
+      html:         clone.innerHTML,
+      activeTopic:  _activeTopic,
+      topicPicked:  _topicPicked,
+      companionSid: _companionSid,
     }));
   } catch {}
 }
@@ -52,10 +47,8 @@ function _loadCache() {
     log.innerHTML  = c.html;
     _activeTopic   = c.activeTopic  || null;
     _topicPicked   = c.topicPicked  || false;
-    _justChatSid   = c.justChatSid  || null;
-    _chatHistory   = c.chatHistory  || [];
+    _companionSid  = c.companionSid || null;
 
-    // Lock topic picker (event listeners lost on innerHTML restore)
     const picker = log.querySelector('.reflect-topic-picker');
     if (picker && !picker.classList.contains('reflect-topic-picker--locked')) {
       picker.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
@@ -79,17 +72,16 @@ function _clearCache() {
 
 function loadReflectInsights() {
   const log = document.getElementById('reflect-chat-log');
-  if (log && log.children.length) return;   // in-memory guard (tab switch)
-  if (_loadCache()) return;                 // sessionStorage restore (page refresh)
+  if (log && log.children.length) return;
+  if (_loadCache()) return;
   _openReflect();
 }
 
 function restartReflect() {
   _clearCache();
   _activeTopic  = null;
-  _chatHistory  = [];
   _topicPicked  = false;
-  _justChatSid  = null;
+  _companionSid = null;
   clearReflectImage();
   clearReflectAudio();
   _openReflect();
@@ -103,7 +95,7 @@ async function _openReflect() {
 
   const stepEl = document.createElement('div');
   stepEl.className = 'reflect-open-step';
-  stepEl.textContent = 'Starting…';
+  stepEl.textContent = 'Catching up on your entries…';
   log.appendChild(stepEl);
 
   try {
@@ -143,7 +135,6 @@ async function _openReflect() {
   } catch (err) {
     stepEl.textContent = '⚠ ' + err.message;
   } finally {
-    // Input always available — typing before picking a topic = just_chat
     const input = document.getElementById('reflect-input-wrap');
     input.classList.remove('hidden');
     _updateAttachButtons();
@@ -204,23 +195,19 @@ function _pickTopic(topic, pickerEl, btnEl) {
   pickerEl.classList.add('reflect-topic-picker--locked');
 
   _activeTopic = topic;
-  _chatHistory = [];
 
   if (topic.type === 'just_chat') {
-    // Plain chat mode — show input immediately, no agent preamble
-    const opener = "What's on your mind?";
+    const opener = "I'm here — what would you like to talk about?";
     _appendBubble('assistant', opener);
     document.getElementById('reflect-input-wrap').classList.remove('hidden');
     document.getElementById('reflect-chat-input').focus();
-    // Show voice/image buttons (already in HTML, just ensure visible)
     _updateAttachButtons();
   } else {
-    // Reflect mode — agent opens first
     _agentOpen(topic);
   }
 }
 
-// ── agent opens the chosen topic (reflect mode) ───────────────────────────────
+// ── agent opens the chosen topic ──────────────────────────────────────────────
 
 async function _agentOpen(topic) {
   const log    = document.getElementById('reflect-chat-log');
@@ -228,28 +215,22 @@ async function _agentOpen(topic) {
   const input  = document.getElementById('reflect-input-wrap');
 
   const seed = topic.question || topic.label;
-  _chatHistory.push({ role: 'user', content: seed });
+  const message = `[Context: ${topic.question || topic.label}]\n${seed}`;
 
   const bubble = _appendBubble('assistant', '');
   bubble.classList.add('bubble-streaming');
 
   try {
-    const res = await fetch('/api/reflect/chat', {
+    const sid = _companionSid || null;
+    const res = await fetch('/api/companion/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        topic_label:    topic.label,
-        topic_question: topic.question || '',
-        rag_query:      topic.rag_query || topic.label,
-        topic_type:     topic.type,
-        history:        [],
-        user_message:   seed,
-      }),
+      body: JSON.stringify({ message, session_id: sid }),
     });
     if (!res.ok) throw new Error(res.statusText);
 
-    const { reply } = await _streamInto(res, bubble, log, status);
-    _chatHistory.push({ role: 'assistant', content: reply });
+    const { reply, sid: newSid } = await _streamInto(res, bubble, log, status);
+    if (newSid) _companionSid = newSid;
 
   } catch (err) {
     status.textContent = err.message;
@@ -296,21 +277,18 @@ function clearReflectAudio() {
   _reflectAudioBlob = null;
 }
 
-// Show/hide voice+image buttons — voice always available, image only for just_chat
+// Image button always visible; voice always available
 function _updateAttachButtons() {
-  const isReflect = _activeTopic && _activeTopic.type !== 'just_chat';
   const imgBtn = document.getElementById('reflect-img-btn');
-  if (imgBtn) imgBtn.classList.toggle('hidden', !!isReflect);
+  if (imgBtn) imgBtn.classList.remove('hidden');
 }
 
 // ── main send ─────────────────────────────────────────────────────────────────
 
 async function sendReflectChat() {
-  // No topic picked yet → treat as just_chat
   if (!_activeTopic) {
     _activeTopic = { label: 'Just talk', question: '', rag_query: '', type: 'just_chat' };
     _topicPicked = true;
-    // Lock the picker if still visible
     const picker = document.getElementById('reflect-topic-picker');
     if (picker) {
       picker.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
@@ -345,12 +323,12 @@ async function sendReflectChat() {
   bubble.classList.add('bubble-streaming');
 
   try {
-    if (_activeTopic.type === 'just_chat') {
-      await _sendJustChat({ text, hasImage, hasAudio, imageFile, audioBlob, thumbSrc, bubble, log, status });
-    } else if (hasAudio) {
-      await _sendReflectVoice({ audioBlob, bubble, log, status });
+    if (hasAudio) {
+      await _sendVoice({ audioBlob, bubble, log, status });
+    } else if (hasImage) {
+      await _sendWithImage({ text, imageFile, thumbSrc, bubble, log, status });
     } else {
-      await _sendReflect({ text, bubble, log, status });
+      await _sendText({ text, bubble, log, status });
     }
   } finally {
     bubble.classList.remove('bubble-streaming');
@@ -360,120 +338,60 @@ async function sendReflectChat() {
   }
 }
 
-// ── just_chat send paths ──────────────────────────────────────────────────────
+// ── send paths ────────────────────────────────────────────────────────────────
 
-async function _sendJustChat({ text, hasImage, hasAudio, imageFile, audioBlob, thumbSrc, bubble, log, status }) {
-  if (hasAudio) {
-    _appendVoiceBubble();
+async function _sendText({ text, bubble, log, status }) {
+  _appendBubble('user', text);
 
-    const fd = new FormData();
-    fd.append('file', audioBlob, 'audio.webm');
-    if (_justChatSid) fd.append('session_id', _justChatSid);
+  const message = _activeTopic && _activeTopic.type !== 'just_chat'
+    ? `[Context: ${_activeTopic.question}]\n${text}`
+    : text;
 
-    const res = await fetch('/api/reflect/voice', { method: 'POST', body: fd });
-    if (!res.ok) throw new Error(res.statusText);
+  const res = await fetch('/api/companion/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, session_id: _companionSid }),
+  });
+  if (!res.ok) throw new Error(res.statusText);
 
-    const { reply, sid } = await _streamInto(res, bubble, log, status);
-    if (sid) _justChatSid = sid;
-
-  } else if (hasImage) {
-    _appendImageBubble(thumbSrc, text || null, log);
-    if (text) _appendBubble('user', text);
-
-    const imgFd = new FormData();
-    imgFd.append('file', imageFile, imageFile.name);
-    if (text) imgFd.append('note', text);
-    imgFd.append('mode', 'chat');
-    if (_justChatSid) imgFd.append('session_id', _justChatSid);
-    fetch('/api/image', { method: 'POST', body: imgFd }).catch(() => {});
-
-    const res = await fetch('/api/reflect/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        topic_label:    _activeTopic.label,
-        topic_question: _activeTopic.question || '',
-        rag_query:      '',
-        topic_type:     'just_chat',
-        history:        [],
-        user_message:   text || '(User shared a photo)',
-        session_id:     _justChatSid,
-      }),
-    });
-    if (!res.ok) throw new Error(res.statusText);
-
-    const { reply, sid } = await _streamInto(res, bubble, log, status);
-    if (sid) _justChatSid = sid;
-
-  } else {
-    _appendBubble('user', text);
-
-    const res = await fetch('/api/reflect/chat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        topic_label:    _activeTopic.label,
-        topic_question: _activeTopic.question || '',
-        rag_query:      '',
-        topic_type:     'just_chat',
-        history:        [],
-        user_message:   text,
-        session_id:     _justChatSid,
-      }),
-    });
-    if (!res.ok) throw new Error(res.statusText);
-
-    const { reply, sid } = await _streamInto(res, bubble, log, status);
-    if (sid) _justChatSid = sid;
-  }
+  const { reply, sid } = await _streamInto(res, bubble, log, status);
+  if (sid) _companionSid = sid;
 }
 
-// ── reflect voice send path ───────────────────────────────────────────────────
-
-async function _sendReflectVoice({ audioBlob, bubble, log, status }) {
+async function _sendVoice({ audioBlob, bubble, log, status }) {
   _appendVoiceBubble();
 
   const fd = new FormData();
   fd.append('file', audioBlob, 'audio.webm');
-  fd.append('topic_type',     _activeTopic.type);
-  fd.append('topic_label',    _activeTopic.label);
-  fd.append('topic_question', _activeTopic.question || '');
-  fd.append('rag_query',      _activeTopic.rag_query || _activeTopic.label);
+  if (_companionSid) fd.append('session_id', _companionSid);
 
-  const res = await fetch('/api/reflect/voice', { method: 'POST', body: fd });
+  const res = await fetch('/api/companion/voice', { method: 'POST', body: fd });
   if (!res.ok) throw new Error(res.statusText);
 
-  const { reply, transcript } = await _streamInto(res, bubble, log, status);
-  if (transcript) {
-    _chatHistory.push({ role: 'user', content: transcript });
-  }
-  if (reply) {
-    _chatHistory.push({ role: 'assistant', content: reply });
-  }
+  const { reply, sid } = await _streamInto(res, bubble, log, status);
+  if (sid) _companionSid = sid;
 }
 
-// ── reflect send path ─────────────────────────────────────────────────────────
+async function _sendWithImage({ text, imageFile, thumbSrc, bubble, log, status }) {
+  _appendImageBubble(thumbSrc, text || null, log);
 
-async function _sendReflect({ text, bubble, log, status }) {
-  _appendBubble('user', text);
-  _chatHistory.push({ role: 'user', content: text });
+  const imgFd = new FormData();
+  imgFd.append('file', imageFile, imageFile.name);
+  if (text) imgFd.append('note', text);
+  imgFd.append('mode', 'companion');
+  if (_companionSid) imgFd.append('session_id', _companionSid);
+  fetch('/api/image', { method: 'POST', body: imgFd }).catch(() => {});
 
-  const res = await fetch('/api/reflect/chat', {
+  const message = text || '(User shared a photo)';
+  const res = await fetch('/api/companion/chat', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      topic_label:    _activeTopic.label,
-      topic_question: _activeTopic.question || '',
-      rag_query:      _activeTopic.rag_query || _activeTopic.label,
-      topic_type:     _activeTopic.type,
-      history:        _chatHistory.slice(0, -1),
-      user_message:   text,
-    }),
+    body: JSON.stringify({ message, session_id: _companionSid }),
   });
   if (!res.ok) throw new Error(res.statusText);
 
-  const { reply } = await _streamInto(res, bubble, log, status);
-  _chatHistory.push({ role: 'assistant', content: reply });
+  const { reply, sid } = await _streamInto(res, bubble, log, status);
+  if (sid) _companionSid = sid;
 }
 
 // ── shared SSE reader ─────────────────────────────────────────────────────────
@@ -484,7 +402,6 @@ async function _streamInto(res, bubble, log, status) {
   let buf        = '';
   let reply      = '';
   let sid        = null;
-  let transcript = null;
 
   while (true) {
     const { value, done } = await reader.read();
@@ -511,13 +428,12 @@ async function _streamInto(res, bubble, log, status) {
         log.scrollTop = log.scrollHeight;
       }
       if (payload.done) {
-        reply      = payload.reply      || reply;
-        sid        = payload.session_id || null;
-        transcript = payload.transcript || null;
+        reply = payload.reply || reply;
+        sid   = payload.session_id || null;
       }
     }
   }
-  return { reply, sid, transcript };
+  return { reply, sid };
 }
 
 // ── DOM helpers ───────────────────────────────────────────────────────────────

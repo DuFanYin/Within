@@ -28,11 +28,6 @@ def test_no_snapshots_returns_silence():
     assert result[0]["type"] == "silence"
 
 
-def test_always_at_least_one_topic():
-    result = _decide_insights([])
-    assert len(result) >= 1
-
-
 # ── pattern detection ─────────────────────────────────────────────────────────
 
 def test_stress_pattern_detected():

@@ -2,7 +2,7 @@
 
 let mediaRecorder = null;
 let audioChunks = [];
-let recordingTarget = null; // 'chat' | 'journal' | 'reflect'
+let recordingTarget = null; // 'journal' | 'reflect'
 
 async function toggleRecording(target) {
   if (mediaRecorder && mediaRecorder.state === 'recording') {
@@ -35,15 +35,11 @@ async function toggleRecording(target) {
 
     const blob = new Blob(audioChunks, { type: 'audio/webm' });
 
-    if (target === 'chat') {
-      // Hand blob to chat.js — actual sending happens when user taps Send
-      setChatAudioBlob(blob);
-      setRecStatus(target, '');
-    } else if (target === 'reflect') {
-      // Hand blob to reflect.js — actual sending happens when user taps Send
+    if (target === 'reflect') {
+      // Hand blob to reflect.js — sending via /api/companion/voice when user taps Send
       setReflectAudioBlob(blob);
       setRecStatus(target, '');
-    } else {
+    } else if (target === 'journal') {
       // Journal: save raw audio; background job will transcribe + summarise tone
       setRecStatus(target, 'Saving…');
       const fd = new FormData();
@@ -58,6 +54,8 @@ async function toggleRecording(target) {
       } catch (err) {
         setRecStatus(target, 'Save failed: ' + err.message, true);
       }
+    } else {
+      setRecStatus(target, 'Unknown recording target', true);
     }
   };
 
@@ -71,7 +69,7 @@ function setRecBtn(target, recording) {
 
 function setRecStatus(target, msg, error = false) {
   const idMap = { journal: 'journal-rec-status', reflect: 'reflect-chat-status' };
-  const id = idMap[target] || 'chat-status';
+  const id = idMap[target];
   const el = document.getElementById(id);
   if (!el) return;
   el.textContent = msg;
