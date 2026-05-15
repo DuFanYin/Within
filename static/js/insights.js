@@ -1,5 +1,14 @@
 'use strict';
 
+// CATEGORY_META is defined in history.js (loaded before this file).
+
+const TAG_BAR_HUES = [45, 145, 255, 20, 55, 300, 180, 10];
+
+function _barWidthPct(count, max) {
+  if (!max || !count) return 0;
+  return Math.max(4, Math.round((count / max) * 100));
+}
+
 // ── colour helpers ────────────────────────────────────────────────────────────
 
 // valence ∈ [-1, 1]  →  hsl colour
@@ -131,12 +140,12 @@ function buildCategoryChart(categories) {
     return;
   }
 
-  const max = categories[0].count;
+  const max = Math.max(...categories.map((c) => c.count));
   const chart = document.createElement('div');
   chart.className = 'bar-chart';
 
   for (const { category, count } of categories) {
-    const meta = CATEGORY_META[category] || { label: category, color: 'var(--accent)', text: '#fff' };
+    const meta = CATEGORY_META[category] || { label: category, color: '#8b7355' };
     const row = document.createElement('div');
     row.className = 'bar-row';
 
@@ -149,7 +158,7 @@ function buildCategoryChart(categories) {
 
     const bar = document.createElement('div');
     bar.className = 'bar-fill';
-    bar.style.width = Math.round((count / max) * 100) + '%';
+    bar.style.width = _barWidthPct(count, max) + '%';
     bar.style.background = meta.color;
 
     const countEl = document.createElement('span');
@@ -177,11 +186,11 @@ function buildTagChart(tags) {
     return;
   }
 
-  const max = tags[0].count;
+  const max = Math.max(...tags.map((t) => t.count));
   const chart = document.createElement('div');
   chart.className = 'bar-chart';
 
-  for (const { tag, count } of tags) {
+  tags.forEach(({ tag, count }, i) => {
     const row = document.createElement('div');
     row.className = 'bar-row';
 
@@ -194,7 +203,9 @@ function buildTagChart(tags) {
 
     const bar = document.createElement('div');
     bar.className = 'bar-fill';
-    bar.style.width = Math.round((count / max) * 100) + '%';
+    bar.style.width = _barWidthPct(count, max) + '%';
+    const hue = TAG_BAR_HUES[i % TAG_BAR_HUES.length];
+    bar.style.background = `hsl(${hue}, 48%, 52%)`;
 
     const countEl = document.createElement('span');
     countEl.className = 'bar-count';
@@ -205,7 +216,7 @@ function buildTagChart(tags) {
     row.appendChild(barWrap);
     row.appendChild(countEl);
     chart.appendChild(row);
-  }
+  });
 
   wrap.appendChild(chart);
 }
@@ -310,8 +321,12 @@ async function loadInsights() {
     buildCategoryChart(data.categories || []);
     buildTagChart(data.tags || []);
   } catch (e) {
-    document.getElementById('heatmap-wrap').innerHTML =
-      '<p class="insights-empty">Could not load data.</p>';
+    console.error('loadInsights failed:', e);
+    const msg = '<p class="insights-empty">Could not load data.</p>';
+    for (const id of ['heatmap-wrap', 'categories-wrap', 'tags-wrap', 'sparkline-wrap']) {
+      const el = document.getElementById(id);
+      if (el) el.innerHTML = msg;
+    }
   }
 
   // Narrative — load async, show when ready

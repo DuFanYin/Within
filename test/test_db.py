@@ -1,5 +1,5 @@
 """
-Tests for app/db.py — schema, migrations, reads and writes.
+Tests for app/db.py — schema, reads and writes.
 All tests use an isolated temp DB via the isolated_db fixture.
 """
 
@@ -32,51 +32,6 @@ def test_all_modes_accepted():
     for mode in ("chat", "journal", "reflect", "companion"):
         eid = db.save_entry(mode, "user", f"entry for {mode}")
         assert eid > 0
-
-
-def test_mode_constraint_migration(tmp_path, monkeypatch):
-    """DB with old CHECK(mode IN ('chat','journal')) is migrated transparently."""
-    old_db = tmp_path / "old.db"
-    conn = sqlite3.connect(str(old_db))
-    conn.executescript("""
-        CREATE TABLE audio_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-            filename TEXT NOT NULL, duration_s REAL, size_bytes INTEGER,
-            transcript TEXT, tone_summary TEXT
-        );
-        CREATE TABLE image_files (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-            filename TEXT NOT NULL, mime_type TEXT NOT NULL DEFAULT 'image/jpeg',
-            size_bytes INTEGER, caption TEXT
-        );
-        CREATE TABLE journal_entries (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            created_at TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-            mode       TEXT    NOT NULL CHECK(mode IN ('chat','journal')),
-            role       TEXT    NOT NULL CHECK(role IN ('user','assistant','summary')),
-            content    TEXT    NOT NULL,
-            source     TEXT    NOT NULL DEFAULT 'text',
-            session_id TEXT,
-            audio_id   INTEGER,
-            image_id   INTEGER
-        );
-        INSERT INTO journal_entries(mode, role, content) VALUES ('chat', 'user', 'old entry');
-    """)
-    conn.close()
-
-    monkeypatch.setattr(db, "_DB_PATH", old_db)
-    db.init_db()
-
-    eid = db.save_entry("reflect", "user", "new reflect entry")
-    assert eid > 0
-
-    conn2 = sqlite3.connect(str(old_db))
-    rows = conn2.execute("SELECT content FROM journal_entries ORDER BY id").fetchall()
-    conn2.close()
-    assert rows[0][0] == "old entry"
-    assert rows[1][0] == "new reflect entry"
 
 
 # ── entry writes / reads ──────────────────────────────────────────────────────

@@ -32,47 +32,6 @@ def _conn() -> sqlite3.Connection:
 
 def init_db() -> None:
     with _conn() as c:
-        # Migrations for existing databases
-        existing = {row[0] for row in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if "journal_entries" in existing:
-            cols = {row[1] for row in c.execute("PRAGMA table_info(journal_entries)")}
-            if "audio_id" not in cols:
-                c.execute("ALTER TABLE journal_entries ADD COLUMN audio_id INTEGER REFERENCES audio_files(id)")
-            if "image_id" not in cols:
-                c.execute("ALTER TABLE journal_entries ADD COLUMN image_id INTEGER REFERENCES image_files(id)")
-            if "source" not in cols:
-                c.execute("ALTER TABLE journal_entries ADD COLUMN source TEXT NOT NULL DEFAULT 'text'")
-            # Widen mode CHECK to include 'reflect' — recreate table if old constraint is too narrow
-            create_sql = c.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND name='journal_entries'"
-            ).fetchone()
-            if create_sql and ("'reflect'" not in create_sql[0] or "'companion'" not in create_sql[0]):
-                c.executescript("""
-                    ALTER TABLE journal_entries RENAME TO _journal_entries_old;
-                    CREATE TABLE journal_entries (
-                        id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                        created_at  TEXT    NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
-                        mode        TEXT    NOT NULL CHECK(mode IN ('chat','journal','reflect','companion')),
-                        role        TEXT    NOT NULL CHECK(role IN ('user','assistant','summary')),
-                        content     TEXT    NOT NULL,
-                        source      TEXT    NOT NULL DEFAULT 'text' CHECK(source IN ('text','voice','image')),
-                        session_id  TEXT,
-                        audio_id    INTEGER REFERENCES audio_files(id),
-                        image_id    INTEGER REFERENCES image_files(id)
-                    );
-                    INSERT INTO journal_entries
-                        SELECT id, created_at,
-                               CASE WHEN mode NOT IN ('chat','journal','reflect','companion') THEN 'chat' ELSE mode END,
-                               role, content, source, session_id, audio_id, image_id
-                        FROM _journal_entries_old;
-                    DROP TABLE _journal_entries_old;
-                    CREATE INDEX IF NOT EXISTS idx_entries_created ON journal_entries(created_at);
-                    CREATE INDEX IF NOT EXISTS idx_entries_session  ON journal_entries(session_id);
-                    CREATE INDEX IF NOT EXISTS idx_entries_audio    ON journal_entries(audio_id);
-                    CREATE INDEX IF NOT EXISTS idx_entries_image    ON journal_entries(image_id);
-                """)
-        c.commit()
-
         c.executescript("""
             CREATE TABLE IF NOT EXISTS audio_files (
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,

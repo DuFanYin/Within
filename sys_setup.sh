@@ -1,193 +1,110 @@
 #!/usr/bin/env bash
-# Bootstrap: clone Cactus into third_party/, create engine venv, pip install, cactus build --python,
-# download default chat + ASR weights, emit ./setup.env.
-# Uses only "${ENGINE}/venv/bin/python" for pip (avoids PEP 668 / Homebrew); does not patch upstream setup.
+# Within app bootstrap: verify built Cactus under third_party/cactus (fixed path),
+# then create the app .venv and pip install -r requirements.txt.
 #
-# Prerequisites: cmake, make, C++ compiler; python3.12; macOS arm64 may need vendored libcurl (see Cactus README).
-#
-# Usage (Within app root):
-#   chmod +x sys_setup.sh && ./sys_setup.sh
-#
-# Also: sources setup.env, creates .venv, pip install -r requirements.txt (same as former manual steps).
-# Then run: source ./setup.env && source .venv/bin/activate && uvicorn ...
+# Cactus clone / setup / build / downloads are upstream-only — not scripted here.
 
 set -euo pipefail
 
 APP_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-THIRD_PARTY="${APP_ROOT}/third_party"
-DEFAULT_ENGINE="${THIRD_PARTY}/cactus"
-ENGINE="${CACTUS_ENGINE_PATH:-$DEFAULT_ENGINE}"
-GIT_URL="${CACTUS_GIT_URL:-https://github.com/cactus-compute/cactus.git}"
+ENGINE="${APP_ROOT}/third_party/cactus"
 
-SKIP_CLONE=0
-SKIP_BUILD=0
-SKIP_MODELS=0
-SHALLOW=(--depth 1)
+TOTAL_PHASES=2
 
-CHAT_MODEL="${CACTUS_MODEL_ID:-google/gemma-4-E2B-it}"
-ASR_MODEL="${CACTUS_ASR_MODEL_ID:-nvidia/parakeet-tdt-0.6b-v3}"
-PRECISION="${CACTUS_WEIGHTS_PRECISION:-INT4}"
+_log_line() {
+  printf '%s\n' "$*"
+}
+
+_log_banner() {
+  _log_line ""
+  _log_line "══════════════════════════════════════════════════════════════════════════════"
+  _log_line "  $*"
+  _log_line "══════════════════════════════════════════════════════════════════════════════"
+}
+
+_phase() {
+  local n="$1" name="$2"
+  _log_banner "PHASE ${n}/${TOTAL_PHASES} — ${name}"
+}
+
+_sub() {
+  _log_line "  ▸ $*"
+}
+
+_ok() {
+  _log_line "  ✓ $*"
+}
 
 usage() {
-  echo "Within — clone/build Cactus engine + download weights."
-  echo "  --skip-clone  --skip-build  --skip-models  --full-clone  --engine PATH"
+  echo "Within — verify third_party/cactus + libcactus, then app .venv + pip."
+  echo "  -h, --help   This message."
   exit 0
 }
 
-while [[ $# -gt 0 ]]; do
+if [[ $# -gt 0 ]]; then
   case "$1" in
-    -h|--help) usage; exit 0 ;;
-    --skip-clone) SKIP_CLONE=1; shift ;;
-    --skip-build) SKIP_BUILD=1; shift ;;
-    --skip-models) SKIP_MODELS=1; shift ;;
-    --full-clone) SHALLOW=(); shift ;;
-    --engine)
-      [[ $# -lt 2 ]] && { echo "ERROR: --engine needs a path"; exit 1; }
-      ENGINE="$(cd "$2" && pwd)"
-      shift 2 ;;
+    -h|--help) usage ;;
     *) echo "Unknown: $1"; exit 1 ;;
   esac
-done
+fi
 
 lib_basename() {
   [[ "$(uname -s)" == "Darwin" ]] && echo "libcactus.dylib" || echo "libcactus.so"
 }
 
 BUILT_LIB="${ENGINE}/cactus/build/$(lib_basename)"
-VENV="${ENGINE}/venv"
-PY="${VENV}/bin/python"
 
-# Create venv + install cactus CLI using only venv python (no source ./setup, no PEP 668 issues).
-_engine_install_python_tools() {
-  if ! command -v python3.12 &>/dev/null; then
-    echo "ERROR: python3.12 not found (brew install python@3.12)"
-    exit 1
-  fi
-  echo "Engine venv + pip (this can take a while)..."
-  [[ -d "$VENV" ]] || python3.12 -m venv "$VENV"
-  [[ -x "$PY" ]] || { echo "ERROR: no $PY"; exit 1; }
+_log_banner "Within — sys_setup.sh"
+_log_line "  App root:    ${APP_ROOT}"
+_log_line "  Engine root: ${ENGINE} (fixed)"
 
-  # Ensure pip is present even if the venv predates it or was partially cleaned.
-  echo "  [1/4] Bootstrapping pip..."
-  "$PY" -m ensurepip --upgrade -q 2>/dev/null || true
-  "$PY" -m pip install --upgrade pip -q
-
-  REQ="${ENGINE}/python/requirements.txt"
-  [[ -f "$REQ" ]] || { echo "ERROR: missing $REQ"; exit 1; }
-  echo "  [2/4] Installing engine requirements ($REQ)..."
-  "$PY" -m pip install -r "$REQ" -q
-
-  PARENT_REQ="${ENGINE}/../requirements.txt"
-  if [[ -f "$PARENT_REQ" ]] && [[ "$PARENT_REQ" != "$REQ" ]]; then
-    echo "  [3/4] Installing app requirements ($PARENT_REQ)..."
-    "$PY" -m pip install -r "$PARENT_REQ" -q || true
-  fi
-
-  echo "  [4/4] Installing cactus CLI (editable)..."
-  "$PY" -m pip install -e "${ENGINE}/python" -q
-  echo "cactus CLI at ${VENV}/bin/cactus"
-}
-
-echo "== Within — sys_setup.sh =="
-echo "App root:    ${APP_ROOT}"
-echo "Engine root: ${ENGINE}"
-echo ""
-
-if [[ "$SKIP_CLONE" -eq 0 ]]; then
-  if [[ -d "${ENGINE}/.git" ]] || [[ -f "${ENGINE}/python/src/cactus.py" ]]; then
-    echo "Engine already present; skip clone."
-  else
-    mkdir -p "${THIRD_PARTY}"
-    echo "Cloning ${GIT_URL} → ${ENGINE}"
-    git clone "${SHALLOW[@]}" "${GIT_URL}" "${ENGINE}"
-  fi
-else
-  [[ -f "${ENGINE}/python/src/cactus.py" ]] || { echo "ERROR: missing ${ENGINE}/python/src/cactus.py"; exit 1; }
+_phase 1 "Verify Cactus engine (third_party/cactus)"
+if [[ ! -d "${ENGINE}" ]]; then
+  echo "ERROR: missing directory ${ENGINE}"
+  exit 1
 fi
-
-if [[ "$SKIP_BUILD" -eq 0 ]]; then
-  _engine_install_python_tools
-  echo "Building libcactus (Python FFI shared lib)..."
-  (
-    cd "${ENGINE}"
-    export PATH="${VENV}/bin:${PATH}"
-    cactus build --python
-  )
-else
-  echo "Skipping build (--skip-build)."
-fi
-
-[[ -f "$BUILT_LIB" ]] || {
-  echo "ERROR: not found: $BUILT_LIB"
+[[ -f "${ENGINE}/python/src/cactus.py" ]] || {
+  echo "ERROR: missing ${ENGINE}/python/src/cactus.py"
   exit 1
 }
-echo "Shared library: $BUILT_LIB"
-
-CACTUS_CLI="${VENV}/bin/cactus"
-
-if [[ "$SKIP_MODELS" -eq 0 ]]; then
-  [[ -x "$CACTUS_CLI" ]] || {
-    echo "ERROR: $CACTUS_CLI missing. Run without --skip-build once."
-    exit 1
-  }
-  echo "Downloading models (${PRECISION}) → ${ENGINE}/weights/ ..."
-  export CACTUS_CLI
-  (
-    cd "${ENGINE}"
-    _dl() {
-      local id="$1" cli="$CACTUS_CLI"
-      if [[ -n "${HF_TOKEN:-}" ]]; then
-        "${cli}" download "$id" --precision "${PRECISION}" --token "${HF_TOKEN}"
-      elif [[ -n "${HUGGING_FACE_HUB_TOKEN:-}" ]]; then
-        "${cli}" download "$id" --precision "${PRECISION}" --token "${HUGGING_FACE_HUB_TOKEN}"
-      else
-        "${cli}" download "$id" --precision "${PRECISION}"
-      fi
-    }
-    _dl "${CHAT_MODEL}"
-    _dl "${ASR_MODEL}"
-  )
-else
-  echo "Skipping downloads (--skip-models)."
-fi
-
-cat > "${APP_ROOT}/setup.env" <<EOF
-# sys_setup.sh — app venv is separate from engine venv under third_party/cactus/venv
-export CACTUS_PROJECT_ROOT="$(printf '%q' "${ENGINE}")"
-EOF
+_ok "Cactus Python package present"
+[[ -f "$BUILT_LIB" ]] || {
+  echo "ERROR: shared library not found: $BUILT_LIB"
+  exit 1
+}
+_ok "${BUILT_LIB}"
 
 APP_PY="${APP_ROOT}/.venv/bin/python"
-echo ""
-echo "App venv + requirements (embedded)..."
-# Rebuild venv if missing OR if its activate script points to a stale path
-# (happens when the repo is moved/renamed after the venv was first created).
+
+_phase 2 "Application virtualenv + requirements"
 _venv_stale=0
 if [[ ! -d "${APP_ROOT}/.venv" ]]; then
+  _sub "No .venv yet → creating with $(command -v python3)"
   _venv_stale=1
 elif ! grep -q "VIRTUAL_ENV.*${APP_ROOT}/.venv" "${APP_ROOT}/.venv/bin/activate" 2>/dev/null; then
-  echo "  Detected stale venv (path mismatch); rebuilding..."
+  _sub "Stale .venv (path mismatch) → removing and recreating"
   rm -rf "${APP_ROOT}/.venv"
   _venv_stale=1
 fi
 if [[ "$_venv_stale" -eq 1 ]]; then
   python3 -m venv "${APP_ROOT}/.venv"
+  _ok "App venv created at ${APP_ROOT}/.venv"
+else
+  _ok "App venv already present → reusing ${APP_ROOT}/.venv"
 fi
-# shellcheck disable=SC1091
-set -a
-source "${APP_ROOT}/setup.env"
-set +a
+
 [[ -f "${APP_ROOT}/requirements.txt" ]] || {
   echo "ERROR: missing ${APP_ROOT}/requirements.txt"
   exit 1
 }
-# Ensure pip is present even if the venv predates it or was partially cleaned.
-echo "  [1/2] Bootstrapping pip..."
+_sub "[app pip 1/2] Bootstrapping pip..."
 "${APP_PY}" -m ensurepip --upgrade -q 2>/dev/null || true
 "${APP_PY}" -m pip install --upgrade pip -q
-echo "  [2/2] Installing app requirements..."
+_ok "pip upgraded ($(basename "${APP_PY}"))"
+_sub "[app pip 2/2] Installing ${APP_ROOT}/requirements.txt"
 "${APP_PY}" -m pip install -r "${APP_ROOT}/requirements.txt" -q
+_ok "App requirements installed"
 
-echo ""
-echo "Done. Run the app:"
-echo "  source ${APP_ROOT}/setup.env && source ${APP_ROOT}/.venv/bin/activate"
-echo "  cd ${APP_ROOT} && uvicorn app.main:app --reload --host 0.0.0.0 --port 8765"
+_log_banner "DONE — all phases complete"
+_log_line "  source ${APP_ROOT}/.venv/bin/activate"
+_log_line "  cd ${APP_ROOT} && uvicorn app.main:app --reload --host 0.0.0.0 --port 8765"

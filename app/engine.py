@@ -30,23 +30,14 @@ def _third_party_engine() -> Path:
 
 
 def _repo_root() -> Path:
-    env = os.environ.get("CACTUS_PROJECT_ROOT", "").strip()
-    if env:
-        p = Path(env).expanduser().resolve()
-        if (p / "python" / "src" / "cactus.py").is_file():
-            return p
-        raise RuntimeError(f"CACTUS_PROJECT_ROOT invalid: {p}")
-    bundled = _third_party_engine()
-    if (bundled / "python" / "src" / "cactus.py").is_file():
-        return bundled
-    start = _app_root()
-    for candidate in [start, *start.parents]:
-        if (candidate / "python" / "src" / "cactus.py").is_file():
-            return candidate
-    raise RuntimeError(
-        "Could not find Cactus engine checkout. Clone/build into third_party/cactus "
-        "or set CACTUS_PROJECT_ROOT to a tree containing python/src/cactus.py."
-    )
+    """Fixed engine layout: <Within repo>/third_party/cactus."""
+    root = _third_party_engine()
+    if not (root / "python" / "src" / "cactus.py").is_file():
+        raise RuntimeError(
+            "Cactus engine not found at third_party/cactus (missing python/src/cactus.py). "
+            "Clone and build Cactus there; see https://github.com/cactus-compute/cactus"
+        )
+    return root
 
 
 def _ensure_python_path() -> Path:
@@ -58,7 +49,7 @@ def _ensure_python_path() -> Path:
     if s in sys.path:
         sys.path.remove(s)
     sys.path.insert(0, s)
-    os.environ.setdefault("CACTUS_PROJECT_ROOT", str(root))
+    os.environ["CACTUS_PROJECT_ROOT"] = str(root)
 
     _libname = "libcactus.dylib" if platform.system() == "Darwin" else "libcactus.so"
     existing = os.environ.get("CACTUS_LIB_PATH", "").strip()
