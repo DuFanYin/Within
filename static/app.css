@@ -458,6 +458,7 @@ body {
 }
 .status-bar { font-size: 0.75rem; color: var(--ink-muted); font-family: var(--font-ui); }
 .status-bar.error { color: var(--neg); }
+.status-bar.reflect-cloud-note { color: var(--ink-muted); font-style: italic; }
 @keyframes toastIn {
   0%   { opacity: 0; transform: translateX(-50%) translateY(8px); }
   15%  { opacity: 1; transform: translateX(-50%) translateY(0); }

@@ -196,6 +196,10 @@ You get a streamed reply **immediately** from the model hearing audio directly (
 - **No clinical labels** or diagnosis.
 - If you seem in crisis, copy may gently mention professional support—not automated crisis routing.
 
+### Optional cloud coping (off by default)
+
+If you enable cloud handoff in `.env`, questions like **“How can I cope with stress?”** may show **☁️ Cloud coping tips…** and a status line that your **journal was not sent**. Reflective chat (“why have I felt drained?”) and crisis messages stay on-device. This uses **Cactus Cloud**, not a separate OpenAI key.
+
 ---
 
 ## History
@@ -283,7 +287,7 @@ What happens **without you waiting on a spinner** (typical timing: background lo
 ## Privacy and offline
 
 - **No account** — single-user, this machine.
-- **No cloud LLM** — inference runs locally after setup.
+- **Local by default** — inference runs on your machine after setup. Optional Cactus Cloud for some companion coping questions only if you set `CLOUD_HANDOFF=true` and `CACTUS_CLOUD_KEY` in `.env` (see README).
 - **Data on disk:** SQLite database, `data/audio/`, `data/images/`, and text exports used for search—not sent to a vendor API as part of normal use.
 - **Home + companion copy** stress that content stays on the device.
 
@@ -291,9 +295,9 @@ First visit shows **“Loading Gemma 4…”** while the local model warms up; a
 
 ---
 
-## Demo data (`seed.py`)
+## Demo data (`seed/`)
 
-For judges or developers: run `python seed.py` from the repo root to load **~30 days** of fake journal and chat-style user rows with mood tags—**wiping** existing entries and moods. Useful to preview History, Insights, and Companion topics without journaling for a month. Does not create real audio, images, or search corpus files.
+For judges or developers: run `python -m seed` from the repo root to load **~90 days** of hand-written journal and companion/chat rows with mood tags—**wiping** existing entries and moods. Useful to preview History, Insights, and Companion topics without journaling for months. Does not create real audio, images, or search corpus files. Edit `seed/records.py` to change the narrative.
 
 ---
 

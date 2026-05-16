@@ -286,10 +286,11 @@ async def _companion_sse(
         except asyncio.TimeoutError:
             yield f"data: {json.dumps({'error': 'Companion agent did not finish'})}\n\n"
             return
-        reply = "".join(full_parts) or result.get("reply", "")
         if result.get("error"):
             yield f"data: {json.dumps({'error': result['error']})}\n\n"
             return
+
+        reply = result.get("reply") or "".join(full_parts)
 
         user_id = await asyncio.to_thread(
             save_entry,
@@ -308,7 +309,12 @@ async def _companion_sse(
             asyncio.create_task(_tag_entry(user_id, user_content))
         asyncio.create_task(_sync_corpus())
 
-        yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'reply': reply})}\n\n"
+        done_payload: dict = {"done": True, "session_id": session_id, "reply": reply}
+        if result.get("cloud_handoff"):
+            done_payload["cloud_handoff"] = True
+        if result.get("rule_handoff"):
+            done_payload["rule_handoff"] = True
+        yield f"data: {json.dumps(done_payload)}\n\n"
 
     return StreamingResponse(generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
 

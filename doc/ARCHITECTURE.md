@@ -6,7 +6,7 @@ This document explains how Within is put together: what runs where, how data mov
 
 ## What Within is
 
-Within is a local-first emotion journal with an on-device AI companion. You capture thoughts as text, voice, or photos; the app extracts structured mood signals, shows history and trends, and offers a conversational companion that can search your past entries and mood patterns. All inference stays on your machine through the [Cactus](https://github.com/cactus-compute/cactus) engine (`third_party/cactus`). There is no login, no cloud API, and no telemetry.
+Within is a local-first emotion journal with an on-device AI companion. You capture thoughts as text, voice, or photos; the app extracts structured mood signals, shows history and trends, and offers a conversational companion that can search your past entries and mood patterns. By default, inference runs on your machine through the [Cactus](https://github.com/cactus-compute/cactus) engine (`third_party/cactus`). Optional companion cloud handoff uses **Cactus Cloud** when `CLOUD_HANDOFF=true` and `CACTUS_CLOUD_KEY` are set in `.env`. There is no login and no telemetry.
 
 The implementation is a **modular monolith**: one FastAPI process, one SQLite database, one browser client (vanilla JS, no bundler). Complexity lives in how that process schedules work around blocking FFI calls and background enrichment—not in distributed services.
 
@@ -86,6 +86,16 @@ For **text input**, `pcm_data` is omitted. History is rebuilt from `get_session_
 
 The companion is instructed to stay warm and non-clinical: short replies, at most one question, no unsolicited advice, tools only when they help grounding.
 
+**Optional cloud handoff** (`app/engine.py`, `app/handoff_intent.py`, `app/agent.py`):
+
+- **Master switch:** `CLOUD_HANDOFF=true` and `CACTUS_CLOUD_KEY` (loaded from repo `.env` via `python-dotenv`).
+- **Rule path:** `route_mode()` sends coping-style questions to a short cloud completion—user message plus coarse mood category only, no session history or RAG tools (`skills_cloud` in `handoff_intent.py`).
+- **Crisis path:** self-harm language forces local-only turns (`auto_handoff` off).
+- **Default path:** local two-phase agent; Cactus may still cloud-handoff when local confidence is below `confidence_threshold` (see [Cactus hybrid AI](https://cactuscompute.com/docs/v1.7/hybrid-ai)).
+- **SSE:** `done` may include `cloud_handoff` and `rule_handoff`; the UI shows a short notice in `reflect.js`.
+
+Journal, reflect open, mood tagging, and insights narrative are not routed through this cloud path.
+
 ---
 
 ## Journal capture and enrichment
@@ -153,7 +163,7 @@ Other LLM tasks—mood extraction, daily summaries, tone lines, image captions, 
 
 ## Design constraints and non-goals
 
-**Local-first and private.** Data and models stay on disk and in process memory on the host. Trust is physical access to the machine, not application-level auth.
+**Local-first and private.** Data and models stay on disk and in process memory on the host by default. Optional cloud handoff is opt-in and limited to companion flows described above. Trust is physical access to the machine, not application-level auth.
 
 **Single user.** No accounts, sessions are companion conversation IDs, not security boundaries.
 
@@ -168,8 +178,9 @@ Other LLM tasks—mood extraction, daily summaries, tone lines, image captions, 
 When you need to change behavior, start here:
 
 - **`app/main.py`** — routes, SSE wiring, lifespan loops, ffmpeg PCM helper for companion voice.
-- **`app/agent.py`** — companion persona, tools, two-phase agent loop.
-- **`app/engine.py`** — Cactus bootstrap, chat model singleton, warmup, RAG, shared completions.
+- **`app/agent.py`** — companion persona, tools, two-phase agent loop, optional cloud skills path.
+- **`app/handoff_intent.py`** — rule routing (crisis / skills_cloud / local).
+- **`app/engine.py`** — Cactus bootstrap, `.env`, cloud handoff flags, warmup, RAG, shared completions.
 - **`app/transcribe.py`** — journal ASR only.
 - **`app/reflect.py`** — reflect open: rules + greeting.
 - **`app/emotion.py`** — mood JSON, summaries, captions, insights narrative.

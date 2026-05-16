@@ -12,7 +12,15 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from . import engine as _engine
-from .engine import _base_options, _get_model, _lock, rag_query
+from .engine import (
+    cloud_handoff_enabled,
+    companion_cactus_options,
+    pack_completion_result,
+    _get_model,
+    _lock,
+    rag_query,
+)
+from .handoff_intent import route_mode
 
 _COMPANION_SYSTEM = """\
 You are a warm, private companion for someone's emotion journal. Everything stays on their device.
@@ -75,6 +83,81 @@ _COMPANION_TOOLS = json.dumps([
     },
 ])
 
+_SKILLS_CLOUD_SYSTEM = """\
+You give brief, practical, non-clinical coping ideas (grounding, pacing, boundaries, sleep). \
+No diagnosis. At most one question. Under 4 sentences.\
+"""
+
+
+def _mood_hint(snapshots: list[dict]) -> str:
+    if not snapshots:
+        return ""
+    from collections import Counter
+    cats = [s["category"] for s in snapshots if s.get("category")]
+    if not cats:
+        return ""
+    top = Counter(cats).most_common(1)[0][0]
+    return f"\n[Coarse mood trend only — no journal text: mostly {top}]"
+
+
+def _complete_json(
+    cactus_complete,
+    model,
+    messages: list[dict],
+    options: dict,
+    *,
+    tools: str | None = None,
+    pcm_data: bytes | None = None,
+    on_token=None,
+) -> dict[str, Any]:
+    with _lock:
+        raw = cactus_complete(
+            model,
+            json.dumps(messages),
+            json.dumps(options),
+            tools,
+            on_token,
+            pcm_data,
+        )
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, TypeError):
+        return {"success": False, "error": "invalid_json"}
+
+
+def _skills_cloud_turn(
+    message: str,
+    mood_snapshots: list[dict],
+    token_queue: "queue.Queue[str | None]",
+    cactus_complete,
+    cactus_get_last_error,
+) -> dict[str, Any]:
+    """Rule-based handoff: user's coping question only (+ coarse mood), no journal history/tools."""
+    token_queue.put("\x00TOOL:☁️ Cloud coping tips…\x00")
+    messages = [
+        {"role": "system", "content": _SKILLS_CLOUD_SYSTEM},
+        {"role": "user", "content": message.strip() + _mood_hint(mood_snapshots)},
+    ]
+    opts = companion_cactus_options(
+        temperature=0.5,
+        max_tokens=300,
+        auto_handoff=True,
+        confidence_threshold=0.99,
+    )
+    with _lock:
+        model = _engine._model
+        if not model:
+            return {"error": "model not loaded"}
+    result = _complete_json(cactus_complete, model, messages, opts)
+    if not result.get("success"):
+        err = result.get("error") or cactus_get_last_error() or "cloud_skills_failed"
+        return {"error": str(err)}
+    packed = pack_completion_result(result)
+    packed["rule_handoff"] = True
+    if packed["reply"]:
+        token_queue.put(packed["reply"])
+    return packed
+
 
 def companion_agent_sync(
     message: str,
@@ -93,6 +176,13 @@ def companion_agent_sync(
     """
     try:
         cactus_complete, _, cactus_get_last_error, _ = _get_model()
+        cloud_on = cloud_handoff_enabled()
+        mode = route_mode(message, cloud_configured=cloud_on)
+
+        if mode == "skills_cloud":
+            return _skills_cloud_turn(
+                message, mood_snapshots, token_queue, cactus_complete, cactus_get_last_error,
+            )
 
         system_content = _COMPANION_SYSTEM
         if mood_snapshots:
@@ -130,8 +220,13 @@ def companion_agent_sync(
             user_content = message
         messages.append({"role": "user", "content": user_content})
 
-        options_tool  = {**_base_options(), "temperature": 0.2, "max_tokens": 80}
-        options_reply = {**_base_options(), "temperature": 0.7, "max_tokens": 300}
+        handoff_off = {"auto_handoff": False}
+        if mode == "crisis":
+            options_tool = companion_cactus_options(temperature=0.2, max_tokens=80, **handoff_off)
+            options_reply = companion_cactus_options(temperature=0.7, max_tokens=300, **handoff_off)
+        else:
+            options_tool = companion_cactus_options(temperature=0.2, max_tokens=80)
+            options_reply = companion_cactus_options(temperature=0.7, max_tokens=300)
 
         for _ in range(3):
             with _lock:
@@ -247,10 +342,9 @@ def companion_agent_sync(
         if not result.get("success"):
             return {"error": result.get("error") or "completion_failed"}
 
-        reply = "".join(full_reply) or (result.get("response") or "")
-        meta = {k: result[k] for k in (
-            "time_to_first_token_ms", "total_time_ms", "decode_tps", "total_tokens"
-        ) if k in result}
-        return {"reply": reply, "meta": meta} if meta else {"reply": reply}
+        packed = pack_completion_result(result, "".join(full_reply))
+        if packed.get("cloud_handoff") and packed["reply"] and not full_reply:
+            token_queue.put(packed["reply"])
+        return packed
     finally:
         token_queue.put(None)

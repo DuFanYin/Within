@@ -1,6 +1,6 @@
 # Within
 
-Local-first emotion journal with an on-device AI companion. Journal by text, voice, or photo; review mood over time; chat with a companion that searches your own entries—no cloud API at inference time.
+Local-first emotion journal with an on-device AI companion. Journal by text, voice, or photo; review mood over time; chat with a companion that searches your own entries. Inference runs on your machine by default; optional Cactus Cloud handoff for some companion turns when you enable it in `.env`.
 
 **This repo is a web app MVP** — phone-layout UI in the browser, **not** a native iOS/Android or wearable app. FastAPI and Cactus run on your machine; you open `http://127.0.0.1:8765` (or the same host from a phone on your LAN). Stack: vanilla JS, SQLite, [Cactus](https://github.com/cactus-compute/cactus) (`google/gemma-4-E2B-it` + `nvidia/parakeet-tdt-0.6b-v3`).
 
@@ -57,7 +57,7 @@ Open **http://127.0.0.1:8765/** on desktop or phone (same Wi‑Fi: `http://<your
 
 ```bash
 source .venv/bin/activate
-python seed.py
+python -m seed
 ```
 
 Wipes and reloads sample rows in `data/journal.db`. **Restart uvicorn** after seed (startup re-exports `corpus/` and rebuilds the search index).
@@ -66,7 +66,18 @@ Wipes and reloads sample rows in `data/journal.db`. **Restart uvicorn** after se
 
 ## Configuration
 
-Optional env vars: `app/engine.py`, `app/transcribe.py` (`CACTUS_MODEL_ID`, `CACTUS_WEIGHTS_DIR`, `CACTUS_ASR_MODEL_ID`, …).
+Copy `.env.example` → `.env` and restart **uvicorn** after changes. The app loads `.env` from the repo root on startup (`app/engine.py`).
+
+**Local models (defaults):** `CACTUS_MODEL_ID`, `CACTUS_WEIGHTS_DIR`, `CACTUS_ASR_MODEL_ID`, and related knobs — see `app/engine.py` and `app/transcribe.py`.
+
+**Optional companion cloud handoff** (off unless both are set):
+
+```bash
+CLOUD_HANDOFF=true
+CACTUS_CLOUD_KEY=...   # from `cactus auth` in third_party/cactus
+```
+
+When enabled: most companion chat stays local (Gemma + journal search). Coping-style questions (e.g. “how do I cope with stress?”) can use [Cactus Cloud](https://cactuscompute.com/docs/v1.7/hybrid-ai) with only that message—not your journal history. Crisis wording stays local. Low-confidence local replies may also escalate via Cactus `auto_handoff` (`CACTUS_CONFIDENCE_THRESHOLD`, default `0.7`).
 
 ---
 

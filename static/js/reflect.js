@@ -434,6 +434,13 @@ async function _streamInto(res, bubble, log, status) {
       if (payload.done) {
         reply = payload.reply || reply;
         sid   = payload.session_id || null;
+        if (payload.cloud_handoff && status) {
+          const note = payload.rule_handoff
+            ? 'Coping tips via Cactus Cloud (your journal was not sent).'
+            : 'Reply completed via Cactus Cloud.';
+          status.textContent = note;
+          status.className = 'status-bar reflect-cloud-note';
+        }
       }
     }
   }

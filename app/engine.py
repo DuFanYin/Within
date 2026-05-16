@@ -17,12 +17,44 @@ from typing import Any
 _lock = threading.Lock()
 _model: int | None = None
 _weights_used: str | None = None
+_env_loaded = False
 
-
-# ── path helpers ──────────────────────────────────────────────────────────────
 
 def _app_root() -> Path:
     return Path(__file__).resolve().parent.parent
+
+
+def _load_env_file() -> None:
+    global _env_loaded
+    if _env_loaded:
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(_app_root() / ".env", override=False)
+    except ImportError:
+        pass
+    key = (
+        os.environ.get("CACTUS_CLOUD_KEY", "").strip()
+        or os.environ.get("CACTUS_CLOUD_API_KEY", "").strip()
+    )
+    if key:
+        os.environ.setdefault("CACTUS_CLOUD_KEY", key)
+    _env_loaded = True
+
+
+def cloud_handoff_enabled() -> bool:
+    """True when CLOUD_HANDOFF=true and CACTUS_CLOUD_KEY is set."""
+    _load_env_file()
+    if os.environ.get("CLOUD_HANDOFF", "").strip().lower() not in ("1", "true", "yes", "on"):
+        return False
+    return bool(os.environ.get("CACTUS_CLOUD_KEY", "").strip())
+
+
+_load_env_file()
+
+
+# ── path helpers ──────────────────────────────────────────────────────────────
 
 
 def _repo_root() -> Path:
@@ -126,6 +158,42 @@ def _base_options() -> dict[str, Any]:
     }
 
 
+def companion_cactus_options(**overrides: Any) -> dict[str, Any]:
+    """Options for companion completions, including Cactus cloud handoff."""
+    handoff_on = cloud_handoff_enabled()
+    auto = handoff_on and os.environ.get("CACTUS_AUTO_HANDOFF", "true").lower() == "true"
+    opts: dict[str, Any] = {
+        **_base_options(),
+        "auto_handoff": auto,
+        "confidence_threshold": float(os.environ.get("CACTUS_CONFIDENCE_THRESHOLD", "0.7")),
+        "cloud_timeout_ms": int(os.environ.get("CACTUS_CLOUD_TIMEOUT_MS", "30000")),
+        "handoff_with_images": handoff_on
+        and os.environ.get("CACTUS_HANDOFF_WITH_IMAGES", "true").lower() == "true",
+    }
+    opts.update(overrides)
+    return opts
+
+
+def pack_completion_result(result: dict[str, Any], streamed: str = "") -> dict[str, Any]:
+    """Normalize cactus_complete JSON into agent return shape."""
+    reply = streamed or result.get("response") or ""
+    if result.get("cloud_handoff") and result.get("response"):
+        reply = result["response"]
+    reply = reply.strip()
+    out: dict[str, Any] = {
+        "reply": reply,
+        "cloud_handoff": bool(result.get("cloud_handoff")),
+    }
+    if "confidence" in result:
+        out["confidence"] = result["confidence"]
+    meta = {k: result[k] for k in (
+        "time_to_first_token_ms", "total_time_ms", "decode_tps", "total_tokens",
+    ) if k in result}
+    if meta:
+        out["meta"] = meta
+    return out
+
+
 def _run_complete(
     messages: list[dict],
     options: dict,
@@ -146,9 +214,11 @@ def _run_complete(
         "time_to_first_token_ms", "total_time_ms",
         "prefill_tps", "decode_tps", "ram_usage_mb", "total_tokens",
     ) if k in result}
-    out: dict[str, Any] = {"reply": reply}
+    out: dict[str, Any] = {"reply": reply, "cloud_handoff": bool(result.get("cloud_handoff"))}
     if meta:
         out["meta"] = meta
+    if "confidence" in result:
+        out["confidence"] = result["confidence"]
     return out
 
 
