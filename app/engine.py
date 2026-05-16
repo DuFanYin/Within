@@ -25,13 +25,9 @@ def _app_root() -> Path:
     return Path(__file__).resolve().parent.parent
 
 
-def _third_party_engine() -> Path:
-    return _app_root() / "third_party" / "cactus"
-
-
 def _repo_root() -> Path:
     """Fixed engine layout: <Within repo>/third_party/cactus."""
-    root = _third_party_engine()
+    root = _app_root() / "third_party" / "cactus"
     if not (root / "python" / "src" / "cactus.py").is_file():
         raise RuntimeError(
             "Cactus engine not found at third_party/cactus (missing python/src/cactus.py). "
@@ -165,18 +161,25 @@ def warmup_sync() -> None:
     if _WARMUP_DONE:
         return
     from .agent import _COMPANION_SYSTEM
-    cactus_complete, _, cactus_get_last_error, model = _get_model()
+
+    # Must not call _get_model() while holding _lock — _get_model acquires the same lock on init.
+    cactus_complete, _, _, model = _get_model()
     messages = [
         {"role": "system", "content": _COMPANION_SYSTEM},
         {"role": "user", "content": "Hello"},
     ]
     options = {**_base_options(), "max_tokens": 1}
     with _lock:
+        if _WARMUP_DONE:
+            return
         cactus_complete(model, json.dumps(messages), json.dumps(options), None, None)
-    _WARMUP_DONE = True
+        _WARMUP_DONE = True
 
 
 _WARMUP_DONE = False
+
+
+_cactus_rag_query_fn: Any = None  # optional override for tests
 
 
 def rag_query(query: str, top_k: int = 5) -> list[dict[str, Any]]:
@@ -186,14 +189,16 @@ def rag_query(query: str, top_k: int = 5) -> list[dict[str, Any]]:
     Uses the same Gemma 4 model for embedding — all on-device.
     """
     _ensure_python_path()
-    try:
-        from src.cactus import cactus_rag_query as _rag
-    except ImportError as e:
-        raise RuntimeError(f"Failed to import cactus_rag_query: {e}") from e
+    rag_fn = _cactus_rag_query_fn
+    if rag_fn is None:
+        try:
+            from src.cactus import cactus_rag_query as rag_fn
+        except ImportError as e:
+            raise RuntimeError(f"Failed to import cactus_rag_query: {e}") from e
 
     _, _, _, model = _get_model()
     with _lock:
-        raw = _rag(model, query, top_k)
+        raw = rag_fn(model, query, top_k)
 
     try:
         parsed = json.loads(raw)
@@ -202,7 +207,59 @@ def rag_query(query: str, top_k: int = 5) -> list[dict[str, Any]]:
 
     if isinstance(parsed, list):
         return parsed
-    return parsed.get("results", [])
+    chunks = parsed.get("chunks") or parsed.get("results") or []
+    out: list[dict[str, Any]] = []
+    for c in chunks:
+        if not isinstance(c, dict):
+            continue
+        doc = (c.get("content") or c.get("document") or c.get("text") or "").strip()
+        if doc:
+            out.append({"document": doc, "score": c.get("score")})
+    return out
+
+
+def _corpus_is_stale(corpus_dir: Path) -> bool:
+    """Match third_party/cactus/cactus/ffi/cactus_init.cpp corpus_is_stale."""
+    index_path = corpus_dir / "index.bin"
+    if not index_path.is_file():
+        return True
+    index_mtime = index_path.stat().st_mtime
+    for path in corpus_dir.iterdir():
+        if path.suffix not in (".txt", ".md"):
+            continue
+        if path.stat().st_mtime > index_mtime:
+            return True
+    return False
+
+
+def refresh_corpus_index_sync() -> None:
+    """
+    Rebuild the in-memory RAG index when corpus/*.txt is newer than index.bin.
+    Reloads the model handle (Cactus only builds corpus index at init).
+
+    Skips if another thread holds _lock (companion inference in progress) so we
+    never destroy the handle mid-request. Export will retry on the next sync.
+    """
+    global _model, _weights_used
+    corpus = _app_root() / "corpus"
+    if not _corpus_is_stale(corpus):
+        return
+    if not _lock.acquire(blocking=False):
+        return
+    try:
+        if _model is None or _weights_used is None:
+            return
+        try:
+            cactus_init, _, cactus_destroy, _, _ = _load_cactus()
+            cactus_destroy(_model)
+            _model = cactus_init(str(_weights_used), str(corpus), True)
+        except RuntimeError:
+            _model = None
+            return
+        if not _model:
+            raise RuntimeError("cactus_init failed during corpus refresh")
+    finally:
+        _lock.release()
 
 
 def shutdown_model() -> None:

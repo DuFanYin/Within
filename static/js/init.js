@@ -24,11 +24,24 @@
   const banner = document.getElementById('init-banner');
   banner.classList.add('visible');
 
+  let ok = false;
   try {
-    await fetch('/api/warmup', { method: 'POST' });
-  } catch {}
+    const res = await fetch('/api/warmup', { method: 'POST' });
+    ok = res.ok;
+    if (!ok) {
+      const body = await res.json().catch(() => ({}));
+      banner.textContent = `⚠ Model load failed (${res.status}${body.detail ? ': ' + body.detail : ''})`;
+      banner.classList.add('visible');
+      return;
+    }
+  } catch (err) {
+    banner.textContent = '⚠ Cannot reach server — is uvicorn running?';
+    banner.classList.add('visible');
+    return;
+  }
 
-  // Brief pause so the transition is visible, then collapse
-  await new Promise(r => setTimeout(r, 400));
-  banner.classList.remove('visible');
+  if (ok) {
+    await new Promise(r => setTimeout(r, 400));
+    banner.classList.remove('visible');
+  }
 })();

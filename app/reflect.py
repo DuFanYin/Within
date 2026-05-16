@@ -184,10 +184,7 @@ def reflect_open_sync(snapshots: list[dict]) -> dict[str, Any]:
     decisions = _decide_insights(snapshots)
 
     greeting_query = decisions[0]["rag_query"] if decisions else "feeling"
-    try:
-        rag_results = rag_query(greeting_query, top_k=3) if greeting_query.strip() else []
-    except Exception:
-        rag_results = []
+    rag_results = rag_query(greeting_query, top_k=3) if greeting_query.strip() else []
 
     snippets = []
     if rag_results:

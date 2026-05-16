@@ -60,7 +60,7 @@ source .venv/bin/activate
 python seed.py
 ```
 
-Wipes and reloads sample rows in `data/journal.db`. **Restart uvicorn** after seed so Companion search and greetings see the corpus.
+Wipes and reloads sample rows in `data/journal.db`. **Restart uvicorn** after seed (startup re-exports `corpus/` and rebuilds the search index).
 
 ---
 
@@ -75,7 +75,7 @@ Optional env vars: `app/engine.py`, `app/transcribe.py` (`CACTUS_MODEL_ID`, `CAC
 | Issue | Fix |
 |-------|-----|
 | Stale `.venv` | `rm -rf .venv && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt` |
-| Companion misses new entries | Restart uvicorn (RAG index built at startup) |
+| Companion misses new entries | Wait for background corpus sync (~after save); if still stale, restart uvicorn (refresh can skip while the model is busy) |
 | Journal voice empty | Wait ~2 min for background ASR |
 
-**Tests:** `pytest` (needs built engine; see `test/`).
+**Tests:** `pytest` (unit + HTTP always; `test/e2e/` one model call per file, skipped if Cactus is not built).

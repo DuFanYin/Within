@@ -1,6 +1,7 @@
 'use strict';
 
 let _journalImageFile = null;
+let _journalPreviewUrl = null;
 
 document.addEventListener('DOMContentLoaded', () => {
   const ta = document.getElementById('journal-textarea');
@@ -16,13 +17,18 @@ function onJournalImagePicked(input) {
   const file = input.files[0];
   if (!file) return;
   _journalImageFile = file;
-  const url = URL.createObjectURL(file);
-  document.getElementById('journal-img-thumb').src = url;
+  if (_journalPreviewUrl) URL.revokeObjectURL(_journalPreviewUrl);
+  _journalPreviewUrl = URL.createObjectURL(file);
+  document.getElementById('journal-img-thumb').src = _journalPreviewUrl;
   document.getElementById('journal-img-preview').classList.add('visible');
 }
 
 function clearJournalImage() {
   _journalImageFile = null;
+  if (_journalPreviewUrl) {
+    URL.revokeObjectURL(_journalPreviewUrl);
+    _journalPreviewUrl = null;
+  }
   const inp = document.getElementById('journal-img-input');
   if (inp) inp.value = '';
   const thumb = document.getElementById('journal-img-thumb');

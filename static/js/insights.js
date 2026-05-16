@@ -4,11 +4,6 @@
 
 const TAG_BAR_HUES = [45, 145, 255, 20, 55, 300, 180, 10];
 
-function _barWidthPct(count, max) {
-  if (!max || !count) return 0;
-  return Math.max(4, Math.round((count / max) * 100));
-}
-
 // ── colour helpers ────────────────────────────────────────────────────────────
 
 // valence ∈ [-1, 1]  →  hsl colour
@@ -40,7 +35,7 @@ function buildHeatmap(daily) {
 
   // Always show a fixed window: 3 months back to 2 weeks ahead
   const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
+  const todayStr = localDateStr(today);
 
   const startDate = new Date(today);
   startDate.setDate(startDate.getDate() - 100);
@@ -94,7 +89,7 @@ function buildHeatmap(daily) {
       scrollArea.appendChild(weekCol);
     }
 
-    const dayStr = cur.toISOString().slice(0, 10);
+    const dayStr = localDateStr(cur);
     const data   = byDay[dayStr];
 
     const cell = document.createElement('div');
@@ -104,7 +99,7 @@ function buildHeatmap(daily) {
       cell.title = `${dayStr}\nMood: ${data.valence > 0 ? '+' : ''}${data.valence.toFixed(2)}  Intensity: ${data.intensity.toFixed(2)}\n${data.count} entr${data.count === 1 ? 'y' : 'ies'}`;
     }
     if (dayStr === todayStr) {
-      cell.style.outline = '2px solid var(--negative)';
+      cell.style.outline = '2px solid var(--neg)';
       cell.style.outlineOffset = '1px';
     }
     weekCol.appendChild(cell);
@@ -129,44 +124,42 @@ function buildHeatmap(daily) {
   wrap.appendChild(legend);
 }
 
-// ── category breakdown ────────────────────────────────────────────────────────
+// ── bar charts (categories + tags) ────────────────────────────────────────────
 
-function buildCategoryChart(categories) {
-  const wrap = document.getElementById('categories-wrap');
+function buildBarChart(wrapId, rows, emptyMsg) {
+  const wrap = document.getElementById(wrapId);
   wrap.innerHTML = '';
-
-  if (!categories || !categories.length) {
-    wrap.innerHTML = '<p class="insights-empty">No category data yet.</p>';
+  if (!rows.length) {
+    wrap.innerHTML = `<p class="insights-empty">${emptyMsg}</p>`;
     return;
   }
 
-  const max = Math.max(...categories.map((c) => c.count));
+  const max = Math.max(...rows.map((r) => r.count));
   const chart = document.createElement('div');
   chart.className = 'bar-chart';
 
-  for (const { category, count } of categories) {
-    const meta = CATEGORY_META[category] || { label: category, color: '#8b7355' };
+  for (const { label, count, barBackground } of rows) {
     const row = document.createElement('div');
     row.className = 'bar-row';
 
-    const label = document.createElement('span');
-    label.className = 'bar-label';
-    label.textContent = meta.label;
+    const labelEl = document.createElement('span');
+    labelEl.className = 'bar-label';
+    labelEl.textContent = label;
 
     const barWrap = document.createElement('div');
     barWrap.className = 'bar-track';
 
     const bar = document.createElement('div');
     bar.className = 'bar-fill';
-    bar.style.width = _barWidthPct(count, max) + '%';
-    bar.style.background = meta.color;
+    bar.style.width = (max && count ? Math.max(4, Math.round((count / max) * 100)) : 0) + '%';
+    bar.style.background = barBackground;
 
     const countEl = document.createElement('span');
     countEl.className = 'bar-count';
     countEl.textContent = count;
 
     barWrap.appendChild(bar);
-    row.appendChild(label);
+    row.appendChild(labelEl);
     row.appendChild(barWrap);
     row.appendChild(countEl);
     chart.appendChild(row);
@@ -175,57 +168,28 @@ function buildCategoryChart(categories) {
   wrap.appendChild(chart);
 }
 
-// ── tag bar chart ─────────────────────────────────────────────────────────────
+function buildCategoryChart(categories) {
+  const rows = (categories || []).map(({ category, count }) => {
+    const meta = CATEGORY_META[category] || { label: category, color: '#8b7355' };
+    return { label: meta.label, count, barBackground: meta.color };
+  });
+  buildBarChart('categories-wrap', rows, 'No category data yet.');
+}
 
 function buildTagChart(tags) {
-  const wrap = document.getElementById('tags-wrap');
-  wrap.innerHTML = '';
-
-  if (!tags.length) {
-    wrap.innerHTML = '<p class="insights-empty">No emotion tags yet.</p>';
-    return;
-  }
-
-  const max = Math.max(...tags.map((t) => t.count));
-  const chart = document.createElement('div');
-  chart.className = 'bar-chart';
-
-  tags.forEach(({ tag, count }, i) => {
-    const row = document.createElement('div');
-    row.className = 'bar-row';
-
-    const label = document.createElement('span');
-    label.className = 'bar-label';
-    label.textContent = tag;
-
-    const barWrap = document.createElement('div');
-    barWrap.className = 'bar-track';
-
-    const bar = document.createElement('div');
-    bar.className = 'bar-fill';
-    bar.style.width = _barWidthPct(count, max) + '%';
-    const hue = TAG_BAR_HUES[i % TAG_BAR_HUES.length];
-    bar.style.background = `hsl(${hue}, 48%, 52%)`;
-
-    const countEl = document.createElement('span');
-    countEl.className = 'bar-count';
-    countEl.textContent = count;
-
-    barWrap.appendChild(bar);
-    row.appendChild(label);
-    row.appendChild(barWrap);
-    row.appendChild(countEl);
-    chart.appendChild(row);
-  });
-
-  wrap.appendChild(chart);
+  const rows = (tags || []).map(({ tag, count }, i) => ({
+    label: tag,
+    count,
+    barBackground: `hsl(${TAG_BAR_HUES[i % TAG_BAR_HUES.length]}, 48%, 52%)`,
+  }));
+  buildBarChart('tags-wrap', rows, 'No emotion tags yet.');
 }
 
 // ── stats helpers ─────────────────────────────────────────────────────────────
 
 function _computeStats(daily) {
-  const today = new Date().toISOString().slice(0, 10);
-  const thisMonth = today.slice(0, 7);
+  const today = localDateStr();
+  const thisMonth = localMonthStr();
 
   // entries this month
   const monthEntries = daily
@@ -237,7 +201,7 @@ function _computeStats(daily) {
   let streak = 0;
   const cur = new Date();
   while (true) {
-    const key = cur.toISOString().slice(0, 10);
+    const key = localDateStr(cur);
     if (!daySet.has(key)) break;
     streak++;
     cur.setDate(cur.getDate() - 1);
@@ -246,9 +210,11 @@ function _computeStats(daily) {
   // mood vs last month: compare avg valence
   const lastMonth = new Date();
   lastMonth.setMonth(lastMonth.getMonth() - 1);
-  const lastMonthStr = lastMonth.toISOString().slice(0, 7);
-  const thisAvg = _avg(daily.filter(d => d.day.startsWith(thisMonth)));
-  const lastAvg = _avg(daily.filter(d => d.day.startsWith(lastMonthStr)));
+  const lastMonthStr = localMonthStr(lastMonth);
+  const thisRows = daily.filter(d => d.day.startsWith(thisMonth));
+  const lastRows = daily.filter(d => d.day.startsWith(lastMonthStr));
+  const thisAvg = thisRows.length ? thisRows.reduce((s, r) => s + r.valence, 0) / thisRows.length : null;
+  const lastAvg = lastRows.length ? lastRows.reduce((s, r) => s + r.valence, 0) / lastRows.length : null;
   let moodTrend = '—';
   if (thisAvg !== null && lastAvg !== null && lastAvg !== 0) {
     const pct = Math.round(((thisAvg - lastAvg) / Math.abs(lastAvg)) * 100);
@@ -256,11 +222,6 @@ function _computeStats(daily) {
   }
 
   return { monthEntries, streak, moodTrend, moodPositive: thisAvg !== null && lastAvg !== null && thisAvg >= lastAvg };
-}
-
-function _avg(rows) {
-  if (!rows.length) return null;
-  return rows.reduce((s, r) => s + r.valence, 0) / rows.length;
 }
 
 function buildSparkline(daily) {

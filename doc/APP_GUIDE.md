@@ -185,8 +185,9 @@ You get a streamed reply **immediately** from the model hearing audio directly (
 
 ### Image (Companion)
 
-- Attach photo + optional caption.
-- Image uploads in the background; chat may use your text or “(User shared a photo)” as the message. Captioning for search happens asynchronously.
+- Attach photo + optional caption, then **Send**.
+- The photo is sent to the companion in the same request (**multipart** `POST /api/companion/chat`); Gemma sees the image for that turn’s reply (not text-only with a placeholder).
+- The file is also saved on disk; a background caption is written later for **search** in future turns (same as journal images).
 
 ### Companion boundaries (product)
 
@@ -243,7 +244,7 @@ Under each family, **sub-tags** are short controlled words (e.g. `overwhelmed`, 
 
 **Purpose:** Aggregate view of mood over time—not free-form Q&A.
 
-Loads when you open the tab (`/api/stats` + optional narrative).
+Loads when you open the tab (`/api/stats` + optional narrative). Day boundaries, streaks, and heatmap cells use your **browser’s local calendar date** (not UTC midnight).
 
 | Element | Meaning |
 |---------|---------|
@@ -271,11 +272,11 @@ What happens **without you waiting on a spinner** (typical timing: background lo
 | Journal photo | Thumbnail in History | Emotional caption (for search); mood tags **only if you also saved a text note** |
 | Companion text | Your bubble + streamed reply | Mood tags on your message |
 | Companion voice | Reply stream + voice row | Transcript, tone, mood tags |
-| Companion image | Your bubble + reply | Image caption in background |
+| Companion image | Your bubble + streamed reply (model sees the photo) | Image caption in background (for later search) |
 
 **Tone summary** (voice): a short note about **how you sounded**, separate from the transcript—both can appear in History and feed memory.
 
-**Companion memory:** Past entries are searchable once exported to the local index. **Very new** entries may not appear in search until the app restarts—see [ARCHITECTURE.md](./ARCHITECTURE.md) (corpus / RAG). In-session tools and mood stats still help for recent context.
+**Companion memory:** Past entries are searchable once exported and the local index has refreshed (usually shortly after save; see [ARCHITECTURE.md](./ARCHITECTURE.md)). If the model is busy, refresh may wait until the next sync. In-session tools and mood stats still help for recent context.
 
 ---
 
@@ -304,7 +305,7 @@ For judges or developers: run `python seed.py` from the repo root to load **~30 
 | History scope | Your messages only—not assistant replies |
 | Day summaries | Generated in background, not shown in UI |
 | Image-only journal | Mood tags only when you added a text note |
-| Search freshness | Newest exports may miss companion search until restart |
+| Search freshness | Brand-new exports may lag until background corpus sync + index refresh (rarely needs restart) |
 | Web MVP | Mobile-first layout in the browser; not a native App Store build |
 | Reflect empty state | “Something else” vs normal **Just talk** card set |
 

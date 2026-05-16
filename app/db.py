@@ -98,6 +98,14 @@ def save_image_file(filename: str, mime_type: str, size_bytes: int) -> int:
         return cur.lastrowid  # type: ignore[return-value]
 
 
+def get_image_file_row(image_id: int) -> dict[str, Any] | None:
+    with _conn() as c:
+        row = c.execute(
+            "SELECT filename, mime_type FROM image_files WHERE id=?", (image_id,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
 def update_image_caption(image_id: int, caption: str) -> None:
     """Write back the AI-generated caption for an image."""
     with _conn() as c:
@@ -194,10 +202,7 @@ def get_recent_mood(days: int = 14) -> list[dict[str, Any]]:
         """, (f"-{days}",)).fetchall()
     out = []
     for r in rows:
-        try:
-            tags = json.loads(r["sub_tags"]) if r["sub_tags"] else []
-        except (json.JSONDecodeError, TypeError):
-            tags = []
+        tags = json.loads(r["sub_tags"]) if r["sub_tags"] else []
         out.append({
             "day": r["day"],
             "valence": r["valence"],
@@ -252,11 +257,8 @@ def get_stats() -> dict[str, Any]:
     # flatten and count sub_tags
     tag_counts: dict[str, int] = {}
     for r in sub_tag_rows:
-        try:
-            for t in json.loads(r["sub_tags"]):
-                tag_counts[t] = tag_counts.get(t, 0) + 1
-        except (json.JSONDecodeError, TypeError):
-            pass
+        for t in json.loads(r["sub_tags"]):
+            tag_counts[t] = tag_counts.get(t, 0) + 1
 
     top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:20]
 
@@ -470,11 +472,8 @@ def get_mood_stats_for_agent(days: int = 14) -> dict[str, Any]:
 
     tag_counts: dict[str, int] = {}
     for r in tag_rows:
-        try:
-            for t in json.loads(r["sub_tags"]):
-                tag_counts[t] = tag_counts.get(t, 0) + 1
-        except (json.JSONDecodeError, TypeError):
-            pass
+        for t in json.loads(r["sub_tags"]):
+            tag_counts[t] = tag_counts.get(t, 0) + 1
 
     top_tags = sorted(tag_counts.items(), key=lambda x: x[1], reverse=True)[:8]
 

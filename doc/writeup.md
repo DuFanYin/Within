@@ -71,7 +71,7 @@ There is **no cloud LLM client** in the app. All generation and retrieval go thr
 | Intent | Cactus API | Model |
 |--------|------------|-------|
 | Live companion (text / PCM voice) | `cactus_complete` + stream callback | **Gemma 4 E2B-it** |
-| Search personal history (Reflect, tools) | `cactus_rag_query` | Gemma (retrieval over exported corpus; index built at init) |
+| Search personal history (Reflect, tools) | `cactus_rag_query` | Gemma (retrieval over exported corpus; index rebuilt when `corpus/` is newer than `index.bin`) |
 | Saved journal voice → searchable memory | `cactus_transcribe` → DB → export | **Parakeet** → Gemma for tags/summaries |
 | Vision, mood JSON, daily/insights text | `cactus_complete` | Gemma 4 |
 
@@ -88,7 +88,7 @@ A process-wide lock serializes Gemma FFI; `asyncio.to_thread` and an executor ke
 | Limit | Why it matters |
 |-------|----------------|
 | Web client, not native app | Browser + local server; no store binary in this repo |
-| No `cactus_index_add` yet | New `corpus/*.txt` files are searchable after restart |
+| Index reload, not `cactus_index_add` | New exports trigger `refresh_corpus_index_sync()` (re-init with corpus); skipped if the model lock is held |
 | Journal ASR is async | Voice entries enrich on a ~2 min loop |
 | Companion voice not auto-transcribed to corpus | PCM is for dialogue; durable text uses the journal pipeline |
 | `ffmpeg` required | Companion PCM conversion |
@@ -101,16 +101,16 @@ A process-wide lock serializes Gemma FFI; `asyncio.to_thread` and an executor ke
 - **One Gemma handle, many jobs** — Chat, RAG, vision, JSON, and summaries share one FFI handle; serialization plus thread offload preserve streaming UX in a web client.
 - **Two voice pipelines** — PCM dialogue vs Parakeet-backed memory; both through Cactus, chosen by product intent.
 - **Structure from messy prose** — Controlled mood vocabulary, validation, single retry; tags scaffold charts, not clinical labels.
-- **Grounding without cloud** — Corpus export waits for transcripts/captions; startup index plus in-session tools bridge until live indexing ships.
+- **Grounding without cloud** — Corpus export waits for transcripts/captions; background index refresh plus in-session tools keep search current without a cloud API.
 - **Trust** — Non-clinical prompts; tool calls surface in the UI; retrieval is explicit.
 
 ---
 
 ## 6. Trade-offs and future work
 
-**Mobile-first in the browser** keeps the stack judge-inspectable and avoids store or account gatekeeping while still targeting phone capture flows (voice, bottom nav, single-hand use). Structured tags trade nuance for readable History. RAG freshness lags one restart; latency depends on local hardware.
+**Mobile-first in the browser** keeps the stack judge-inspectable and avoids store or account gatekeeping while still targeting phone capture flows (voice, bottom nav, single-hand use). Structured tags trade nuance for readable History. RAG refresh reloads the handle when corpus files change (not incremental `cactus_index_add`); latency depends on local hardware.
 
-**Next:** wrap the same Cactus routing in a native shell or PWA; **`cactus_index_add`** for live corpus updates; multilingual Gemma/ASR—without sending journals upstream.
+**Next:** wrap the same Cactus routing in a native shell or PWA; finer-grained index updates; multilingual Gemma/ASR—without sending journals upstream.
 
 ---
 

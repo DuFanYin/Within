@@ -7,13 +7,8 @@ let _topicPicked   = false;
 let _companionSid  = null;   // session_id for all companion turns
 
 let _reflectImageFile = null;
+let _reflectPreviewUrl = null;
 let _reflectAudioBlob = null;  // set by recording.js
-
-// Expose to recording.js
-Object.defineProperty(window, '_reflectSessionId', {
-  get: () => _companionSid,
-  configurable: true,
-});
 
 // ── sessionStorage cache ──────────────────────────────────────────────────────
 
@@ -56,7 +51,6 @@ function _loadCache() {
     }
 
     input.classList.remove('hidden');
-    _updateAttachButtons();
     log.scrollTop = log.scrollHeight;
     return true;
   } catch {
@@ -121,25 +115,33 @@ async function _openReflect() {
 
         if (payload.step)   stepEl.textContent = payload.step;
         if (payload.result) data = payload.result;
-        if (payload.error)  { stepEl.textContent = '⚠ ' + payload.error; return; }
+        if (payload.error)  {
+          stepEl.remove();
+          document.getElementById('reflect-chat-status').textContent = '⚠ ' + payload.error;
+          return;
+        }
       }
     }
 
     stepEl.remove();
-    if (!data) return;
+    if (!data) {
+      document.getElementById('reflect-chat-status').textContent =
+        '⚠ Could not load reflect topics';
+      return;
+    }
 
     _appendBubble('assistant', data.greeting);
     _appendTopicPicker(data.topics);
     _saveCache();
 
   } catch (err) {
-    stepEl.textContent = '⚠ ' + err.message;
-  } finally {
-    const input = document.getElementById('reflect-input-wrap');
-    input.classList.remove('hidden');
-    _updateAttachButtons();
-    document.getElementById('reflect-chat-input').focus();
+    stepEl.remove();
+    document.getElementById('reflect-chat-status').textContent = '⚠ ' + err.message;
+    return;
   }
+
+  input.classList.remove('hidden');
+  document.getElementById('reflect-chat-input').focus();
 }
 
 // ── topic picker ──────────────────────────────────────────────────────────────
@@ -159,7 +161,13 @@ function _appendTopicPicker(topics) {
     iconEl.className = 'reflect-topic-icon';
     iconEl.style.background = topic.bgColor || 'var(--surface-alt)';
     iconEl.style.color = topic.color || 'var(--ink-mid)';
-    iconEl.innerHTML = _topicIconSvg(topic.type);
+    if (topic.type === 'just_chat') {
+      iconEl.innerHTML = '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+    } else if (topic.type === 'reflect') {
+      iconEl.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>';
+    } else {
+      iconEl.innerHTML = '<svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>';
+    }
 
     const textWrap = document.createElement('div');
     const title = document.createElement('div');
@@ -180,12 +188,6 @@ function _appendTopicPicker(topics) {
   log.scrollTop = log.scrollHeight;
 }
 
-function _topicIconSvg(type) {
-  if (type === 'just_chat') return '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
-  if (type === 'reflect')   return '<svg viewBox="0 0 24 24"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 .49-3.5"/></svg>';
-  return '<svg viewBox="0 0 24 24"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/></svg>';
-}
-
 function _pickTopic(topic, pickerEl, btnEl) {
   if (_topicPicked) return;
   _topicPicked = true;
@@ -201,7 +203,6 @@ function _pickTopic(topic, pickerEl, btnEl) {
     _appendBubble('assistant', opener);
     document.getElementById('reflect-input-wrap').classList.remove('hidden');
     document.getElementById('reflect-chat-input').focus();
-    _updateAttachButtons();
   } else {
     _agentOpen(topic);
   }
@@ -238,7 +239,6 @@ async function _agentOpen(topic) {
   } finally {
     bubble.classList.remove('bubble-streaming');
     input.classList.remove('hidden');
-    _updateAttachButtons();
     document.getElementById('reflect-chat-input').focus();
     _saveCache();
   }
@@ -250,13 +250,18 @@ function onReflectImagePicked(input) {
   const file = input.files[0];
   if (!file) return;
   _reflectImageFile = file;
-  const url = URL.createObjectURL(file);
-  document.getElementById('reflect-img-thumb').src = url;
+  if (_reflectPreviewUrl) URL.revokeObjectURL(_reflectPreviewUrl);
+  _reflectPreviewUrl = URL.createObjectURL(file);
+  document.getElementById('reflect-img-thumb').src = _reflectPreviewUrl;
   document.getElementById('reflect-img-preview').classList.add('visible');
 }
 
 function clearReflectImage() {
   _reflectImageFile = null;
+  if (_reflectPreviewUrl) {
+    URL.revokeObjectURL(_reflectPreviewUrl);
+    _reflectPreviewUrl = null;
+  }
   const inp = document.getElementById('reflect-img-input');
   if (inp) inp.value = '';
   const thumb = document.getElementById('reflect-img-thumb');
@@ -277,12 +282,6 @@ function clearReflectAudio() {
   _reflectAudioBlob = null;
 }
 
-// Image button always visible; voice always available
-function _updateAttachButtons() {
-  const imgBtn = document.getElementById('reflect-img-btn');
-  if (imgBtn) imgBtn.classList.remove('hidden');
-}
-
 // ── main send ─────────────────────────────────────────────────────────────────
 
 async function sendReflectChat() {
@@ -294,7 +293,6 @@ async function sendReflectChat() {
       picker.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
       picker.classList.add('reflect-topic-picker--locked');
     }
-    _updateAttachButtons();
   }
 
   const inputEl  = document.getElementById('reflect-chat-input');
@@ -324,74 +322,73 @@ async function sendReflectChat() {
 
   try {
     if (hasAudio) {
-      await _sendVoice({ audioBlob, bubble, log, status });
+      const voiceRow = document.createElement('div');
+      voiceRow.className = 'bubble-row bubble-row-user';
+      const voiceBubble = document.createElement('div');
+      voiceBubble.className = 'bubble bubble-user';
+      voiceBubble.innerHTML = '<span style="opacity:.7">🎙 Voice message</span>';
+      voiceRow.appendChild(voiceBubble);
+      log.appendChild(voiceRow);
+      log.scrollTop = log.scrollHeight;
+
+      const fd = new FormData();
+      fd.append('file', audioBlob, 'audio.webm');
+      if (_companionSid) fd.append('session_id', _companionSid);
+      const res = await fetch('/api/companion/voice', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(res.statusText);
+      const out = await _streamInto(res, bubble, log, status);
+      if (out.sid) _companionSid = out.sid;
     } else if (hasImage) {
-      await _sendWithImage({ text, imageFile, thumbSrc, bubble, log, status });
+      const imgRow = document.createElement('div');
+      imgRow.className = 'bubble-row bubble-row-user';
+      const imgBubble = document.createElement('div');
+      imgBubble.className = 'bubble bubble-user';
+      const img = document.createElement('img');
+      img.src = thumbSrc;
+      img.style.cssText = 'max-width:100%; max-height:12rem; border-radius:var(--radius-xs); display:block; object-fit:cover;';
+      imgBubble.appendChild(img);
+      if (text) {
+        const cap = document.createElement('div');
+        cap.style.cssText = 'font-size:.8rem; margin-top:.3rem; opacity:.8;';
+        cap.textContent = text;
+        imgBubble.appendChild(cap);
+      }
+      imgRow.appendChild(imgBubble);
+      log.appendChild(imgRow);
+      log.scrollTop = log.scrollHeight;
+
+      const fd = new FormData();
+      fd.append('file', imageFile, imageFile.name);
+      fd.append('message', text || 'What do you notice in this photo?');
+      if (_companionSid) fd.append('session_id', _companionSid);
+
+      const res = await fetch('/api/companion/chat', { method: 'POST', body: fd });
+      if (!res.ok) throw new Error(res.statusText);
+      const out = await _streamInto(res, bubble, log, status);
+      if (out.sid) _companionSid = out.sid;
     } else {
-      await _sendText({ text, bubble, log, status });
+      _appendBubble('user', text);
+      const message = _activeTopic && _activeTopic.type !== 'just_chat'
+        ? `[Context: ${_activeTopic.question}]\n${text}`
+        : text;
+      const res = await fetch('/api/companion/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message, session_id: _companionSid }),
+      });
+      if (!res.ok) throw new Error(res.statusText);
+      const out = await _streamInto(res, bubble, log, status);
+      if (out.sid) _companionSid = out.sid;
     }
+  } catch (err) {
+    status.textContent = err.message;
+    bubble.remove();
   } finally {
     bubble.classList.remove('bubble-streaming');
     send.disabled = false;
     inputEl.focus();
     _saveCache();
   }
-}
-
-// ── send paths ────────────────────────────────────────────────────────────────
-
-async function _sendText({ text, bubble, log, status }) {
-  _appendBubble('user', text);
-
-  const message = _activeTopic && _activeTopic.type !== 'just_chat'
-    ? `[Context: ${_activeTopic.question}]\n${text}`
-    : text;
-
-  const res = await fetch('/api/companion/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, session_id: _companionSid }),
-  });
-  if (!res.ok) throw new Error(res.statusText);
-
-  const { reply, sid } = await _streamInto(res, bubble, log, status);
-  if (sid) _companionSid = sid;
-}
-
-async function _sendVoice({ audioBlob, bubble, log, status }) {
-  _appendVoiceBubble();
-
-  const fd = new FormData();
-  fd.append('file', audioBlob, 'audio.webm');
-  if (_companionSid) fd.append('session_id', _companionSid);
-
-  const res = await fetch('/api/companion/voice', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error(res.statusText);
-
-  const { reply, sid } = await _streamInto(res, bubble, log, status);
-  if (sid) _companionSid = sid;
-}
-
-async function _sendWithImage({ text, imageFile, thumbSrc, bubble, log, status }) {
-  _appendImageBubble(thumbSrc, text || null, log);
-
-  const imgFd = new FormData();
-  imgFd.append('file', imageFile, imageFile.name);
-  if (text) imgFd.append('note', text);
-  imgFd.append('mode', 'companion');
-  if (_companionSid) imgFd.append('session_id', _companionSid);
-  fetch('/api/image', { method: 'POST', body: imgFd }).catch(() => {});
-
-  const message = text || '(User shared a photo)';
-  const res = await fetch('/api/companion/chat', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message, session_id: _companionSid }),
-  });
-  if (!res.ok) throw new Error(res.statusText);
-
-  const { reply, sid } = await _streamInto(res, bubble, log, status);
-  if (sid) _companionSid = sid;
 }
 
 // ── shared SSE reader ─────────────────────────────────────────────────────────
@@ -420,7 +417,14 @@ async function _streamInto(res, bubble, log, status) {
         status.className = 'status-bar error';
       }
       if (payload.tool_call) {
-        _appendToolStep(log, payload.tool_call);
+        const toolRow = document.createElement('div');
+        toolRow.className = 'bubble-row bubble-row-assistant';
+        const toolEl = document.createElement('div');
+        toolEl.className = 'reflect-tool-step';
+        toolEl.textContent = payload.tool_call;
+        toolRow.appendChild(toolEl);
+        log.appendChild(toolRow);
+        log.scrollTop = log.scrollHeight;
       }
       if (payload.token) {
         reply += payload.token;
@@ -449,49 +453,6 @@ function _appendBubble(role, text) {
   log.appendChild(row);
   log.scrollTop = log.scrollHeight;
   return bubble;
-}
-
-function _appendImageBubble(src, caption, log) {
-  const row = document.createElement('div');
-  row.className = 'bubble-row bubble-row-user';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble bubble-user';
-  const img = document.createElement('img');
-  img.src = src;
-  img.style.cssText = 'max-width:100%; max-height:12rem; border-radius:var(--radius-xs); display:block; object-fit:cover;';
-  bubble.appendChild(img);
-  if (caption) {
-    const cap = document.createElement('div');
-    cap.style.cssText = 'font-size:.8rem; margin-top:.3rem; opacity:.8;';
-    cap.textContent = caption;
-    bubble.appendChild(cap);
-  }
-  row.appendChild(bubble);
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-}
-
-function _appendVoiceBubble() {
-  const log = document.getElementById('reflect-chat-log');
-  const row = document.createElement('div');
-  row.className = 'bubble-row bubble-row-user';
-  const bubble = document.createElement('div');
-  bubble.className = 'bubble bubble-user';
-  bubble.innerHTML = '<span style="opacity:.7">🎙 Voice message</span>';
-  row.appendChild(bubble);
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
-}
-
-function _appendToolStep(log, label) {
-  const row = document.createElement('div');
-  row.className = 'bubble-row bubble-row-assistant';
-  const el = document.createElement('div');
-  el.className = 'reflect-tool-step';
-  el.textContent = label;
-  row.appendChild(el);
-  log.appendChild(row);
-  log.scrollTop = log.scrollHeight;
 }
 
 // ── keyboard ──────────────────────────────────────────────────────────────────

@@ -49,19 +49,6 @@ function _makePrng(seed) {
   };
 }
 
-// Parse "#rrggbb" / "#rgb" hex to [r,g,b] 0-255
-function _hexToRgb(hex) {
-  const h = hex.replace('#', '');
-  if (h.length === 3) {
-    return [
-      parseInt(h[0] + h[0], 16),
-      parseInt(h[1] + h[1], 16),
-      parseInt(h[2] + h[2], 16),
-    ];
-  }
-  return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
-}
-
 /**
  * Draw an organic memory-orb onto a canvas element.
  * Each colour gets blobs proportional to its count; blobs are randomly
@@ -160,9 +147,6 @@ function formatTime(iso) {
 
 // ── timeline ──────────────────────────────────────────────────────────────────
 
-function _teardownTimeline() {}
-function _setupScroll() {}
-
 function renderTimelineItem(e, idx) {
   const catMeta = e.category && CATEGORY_META[e.category] ? CATEGORY_META[e.category] : null;
   const dotColor = catMeta ? catMeta.color : 'var(--border)';
@@ -180,18 +164,6 @@ function renderTimelineItem(e, idx) {
   text.className = 'tl-text';
   text.textContent = e.content || '';
 
-  const subTags = (e.sub_tags || []).map(t => {
-    const s = document.createElement('span');
-    s.className = 'tl-tag';
-    s.textContent = t;
-    return s.outerHTML;
-  }).join('');
-  const tagsHtml = subTags ? `<div class="tl-tags">${subTags}</div>` : '';
-
-  const moodHtml = (e.valence != null)
-    ? `<div class="mood-bar"><div class="mood-fill" style="width:${Math.round(((e.valence + 1) / 2) * 100)}%;background:${dotColor}"></div></div>`
-    : '';
-
   const item = document.createElement('div');
   item.className = 'tl-item';
   item.dataset.idx = idx;
@@ -208,7 +180,7 @@ function renderTimelineItem(e, idx) {
 
   const card = item.querySelector('.tl-card');
   card.appendChild(text);
-  if (tagsHtml) {
+  if ((e.sub_tags || []).length) {
     const tagsDiv = document.createElement('div');
     tagsDiv.className = 'tl-tags';
     (e.sub_tags || []).forEach(t => {
@@ -219,7 +191,7 @@ function renderTimelineItem(e, idx) {
     });
     card.appendChild(tagsDiv);
   }
-  if (moodHtml) {
+  if (e.valence != null) {
     const bar = document.createElement('div');
     bar.className = 'mood-bar';
     const fill = document.createElement('div');
@@ -234,8 +206,6 @@ function renderTimelineItem(e, idx) {
 }
 
 async function loadTimeline(day) {
-  _teardownTimeline();
-
   const container = document.getElementById('timeline');
   container.innerHTML = '<div style="color:var(--ink-muted);font-size:.85rem;padding:.5rem 0 .5rem 1rem;">Loading…</div>';
 

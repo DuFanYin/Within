@@ -22,15 +22,14 @@ def export_corpus_incremental(entries: list[dict]) -> int:
     as a separate labelled block so RAG can retrieve both what was said and how.
     Returns the new cursor (max id exported), or 0 if nothing new.
 
-    Note: Cactus builds its vector index from corpus/ at cactus_init (startup).
-    Entries written here after startup are on disk but not yet in the live index —
-    they become searchable on the next restart. For hot-updating the index,
-    use cactus_index_add() with the embedding from cactus_embed() after writing.
+    After export, main._sync_corpus calls engine.refresh_corpus_index_sync() so Cactus
+    rebuilds index.bin when any .txt is newer than the cached index (see cactus_init.cpp).
     """
     global _corpus_cursor
     if not entries:
         return _corpus_cursor
     corpus = corpus_dir()
+    written_max = _corpus_cursor
     for e in entries:
         fname = corpus / f"{e['id']:08d}.txt"
         date = e["created_at"][:10]
@@ -57,7 +56,7 @@ def export_corpus_incremental(entries: list[dict]) -> int:
             body = f"[{date}] [{mode}]\n{e['content']}\n"
 
         fname.write_text(body, encoding="utf-8")
+        written_max = max(written_max, e["id"])
 
-    new_cursor = entries[-1]["id"]
-    _corpus_cursor = new_cursor
-    return new_cursor
+    _corpus_cursor = written_max
+    return written_max

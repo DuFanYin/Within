@@ -7,33 +7,36 @@ Start from app root:
 
 import asyncio
 import json
+import os
 import queue
+import time
 import shutil
 import subprocess
 import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
+from typing import AsyncIterator
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from .db import (
     init_db, save_entry, save_mood,
     save_audio_file, update_audio_transcript, update_entry_content, get_pending_audio_entries,
-    get_recent_mood, get_last_reflect_summary,
-    save_image_file, update_image_caption, get_pending_image_entries,
+    get_recent_mood,
+    save_image_file, get_image_file_row, update_image_caption, get_pending_image_entries,
     get_session_messages, get_history, get_days_needing_summary, get_day_chat_messages,
     save_summary, get_corpus_entries, get_stats,
 )
-from .corpus import export_corpus_incremental, _corpus_cursor
-from .agent import companion_agent_sync
+from .corpus import export_corpus_incremental
+from . import agent as _agent
 from .emotion import extract_emotion_sync, summarize_sync, tone_summary_sync, image_caption_sync, insight_narrative_sync
 from .reflect import reflect_open_sync
-from .engine import warmup_sync
+from .engine import refresh_corpus_index_sync, warmup_sync
 from .transcribe import transcribe_bytes_sync
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -42,6 +45,7 @@ IMAGE_DIR = ROOT / "data" / "images"
 
 _ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/webp", "image/gif"}
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024  # 10 MB
+_SSE_HEADERS = {"Cache-Control": "no-cache", "X-Accel-Buffering": "no"}
 
 
 def _to_pcm_int16(audio_bytes: bytes, suffix: str = ".webm") -> bytes:
@@ -98,104 +102,71 @@ templates = Jinja2Templates(directory=str(ROOT / "templates"))
 
 
 async def _warmup() -> None:
-    try:
-        await asyncio.to_thread(warmup_sync)
-    except Exception:
-        pass
+    await asyncio.to_thread(warmup_sync)
 
 
 async def _sync_corpus() -> None:
-    """Export any new journal entries to corpus/ so RAG index is fresh."""
-    try:
-        import app.corpus as _corpus
-        entries = await asyncio.to_thread(get_corpus_entries, _corpus._corpus_cursor)
-        if entries:
-            await asyncio.to_thread(export_corpus_incremental, entries)
-    except Exception:
-        pass
+    import app.corpus as _corpus
+    entries = await asyncio.to_thread(get_corpus_entries, _corpus._corpus_cursor)
+    if entries:
+        await asyncio.to_thread(export_corpus_incremental, entries)
+        await asyncio.to_thread(refresh_corpus_index_sync)
 
 
 async def _archiver_loop() -> None:
-    CHECK_INTERVAL = 300
     while True:
-        await asyncio.sleep(CHECK_INTERVAL)
-        try:
-            days = await asyncio.to_thread(get_days_needing_summary)
-            for day in days:
-                asyncio.create_task(_archive_day(day))
-        except Exception:
-            pass
+        await asyncio.sleep(300)
+        for day in await asyncio.to_thread(get_days_needing_summary):
+            asyncio.create_task(_archive_day(day))
 
 
 async def _audio_processor_loop() -> None:
-    CHECK_INTERVAL = 120
     while True:
-        await asyncio.sleep(CHECK_INTERVAL)
-        try:
-            pending = await asyncio.to_thread(get_pending_audio_entries)
-            for item in pending:
-                asyncio.create_task(_process_audio_entry(item))
-        except Exception:
-            pass
+        await asyncio.sleep(120)
+        for item in await asyncio.to_thread(get_pending_audio_entries):
+            asyncio.create_task(_process_audio_entry(item))
 
 
 async def _image_processor_loop() -> None:
-    CHECK_INTERVAL = 120
     while True:
-        await asyncio.sleep(CHECK_INTERVAL)
-        try:
-            pending = await asyncio.to_thread(get_pending_image_entries)
-            for item in pending:
-                asyncio.create_task(_process_image_entry(item))
-        except Exception:
-            pass
+        await asyncio.sleep(120)
+        for item in await asyncio.to_thread(get_pending_image_entries):
+            asyncio.create_task(_process_image_entry(item))
 
 
 async def _process_image_entry(item: dict) -> None:
     image_path = IMAGE_DIR / item["filename"]
-    if not image_path.is_file():
+    caption = await asyncio.to_thread(
+        image_caption_sync, str(image_path), item.get("mime_type", "image/jpeg")
+    )
+    if not caption:
         return
-    try:
-        caption = await asyncio.to_thread(
-            image_caption_sync, str(image_path), item.get("mime_type", "image/jpeg")
-        )
-        if not caption:
-            return
-        await asyncio.to_thread(update_image_caption, item["image_id"], caption)
-        asyncio.create_task(_sync_corpus())
-    except Exception:
-        pass
+    await asyncio.to_thread(update_image_caption, item["image_id"], caption)
+    asyncio.create_task(_sync_corpus())
 
 
 async def _process_audio_entry(item: dict) -> None:
     audio_path = AUDIO_DIR / item["filename"]
-    if not audio_path.is_file():
+    suffix = "." + item["filename"].rsplit(".", 1)[-1]
+    transcript = await asyncio.to_thread(
+        transcribe_bytes_sync, audio_path.read_bytes(), suffix
+    )
+    if not transcript:
         return
-    try:
-        audio_bytes = audio_path.read_bytes()
-        suffix = "." + item["filename"].rsplit(".", 1)[-1]
-        transcript = await asyncio.to_thread(transcribe_bytes_sync, audio_bytes, suffix)
-        if not transcript:
-            return
-        tone = await asyncio.to_thread(tone_summary_sync, transcript)
-        await asyncio.to_thread(update_audio_transcript, item["audio_id"], transcript, tone)
-        await asyncio.to_thread(update_entry_content, item["entry_id"], transcript)
-        asyncio.create_task(_tag_entry(item["entry_id"], transcript))
-        asyncio.create_task(_sync_corpus())
-    except Exception:
-        pass
+    tone = await asyncio.to_thread(tone_summary_sync, transcript)
+    await asyncio.to_thread(update_audio_transcript, item["audio_id"], transcript, tone)
+    await asyncio.to_thread(update_entry_content, item["entry_id"], transcript)
+    asyncio.create_task(_tag_entry(item["entry_id"], transcript))
+    asyncio.create_task(_sync_corpus())
 
 
 async def _archive_day(day: str) -> None:
-    try:
-        messages = await asyncio.to_thread(get_day_chat_messages, day)
-        if not messages:
-            return
-        summary = await asyncio.to_thread(summarize_sync, day, messages)
-        if summary:
-            await asyncio.to_thread(save_summary, day, summary)
-    except Exception:
-        pass
+    messages = await asyncio.to_thread(get_day_chat_messages, day)
+    if not messages:
+        return
+    summary = await asyncio.to_thread(summarize_sync, day, messages)
+    if summary:
+        await asyncio.to_thread(save_summary, day, summary)
 
 
 # ── pages ─────────────────────────────────────────────────────────────────────
@@ -212,6 +183,42 @@ async def warmup_endpoint() -> dict:
     return {"ready": True}
 
 
+# ── dev: one-shot background jobs (same logic as lifespan loops) ─────────────
+
+@app.post("/api/dev/sync-corpus")
+async def dev_sync_corpus() -> dict:
+    """Run corpus export + RAG refresh once (normally after saves or on startup)."""
+    await _sync_corpus()
+    return {"ok": True}
+
+
+@app.post("/api/dev/process-pending-audio")
+async def dev_process_pending_audio() -> dict:
+    """Process all voice entries waiting for transcription (audio loop body)."""
+    pending = await asyncio.to_thread(get_pending_audio_entries)
+    for item in pending:
+        await _process_audio_entry(item)
+    return {"processed": len(pending)}
+
+
+@app.post("/api/dev/process-pending-images")
+async def dev_process_pending_images() -> dict:
+    """Caption all images missing captions (image loop body)."""
+    pending = await asyncio.to_thread(get_pending_image_entries)
+    for item in pending:
+        await _process_image_entry(item)
+    return {"processed": len(pending)}
+
+
+@app.post("/api/dev/archive-summaries")
+async def dev_archive_summaries() -> dict:
+    """Summarize days that need an archive summary (archiver loop body)."""
+    days = await asyncio.to_thread(get_days_needing_summary)
+    for day in days:
+        await _archive_day(day)
+    return {"archived": len(days), "days": days}
+
+
 # ── request models ────────────────────────────────────────────────────────────
 
 class CompanionBody(BaseModel):
@@ -224,29 +231,46 @@ class JournalBody(BaseModel):
     source: str = "text"
 
 
-# ── /api/companion/chat ───────────────────────────────────────────────────────
-
-@app.post("/api/companion/chat")
-async def companion_chat(body: CompanionBody) -> StreamingResponse:
-    """SSE endpoint: companion agentic chat. Yields tokens then done event."""
-    session_id = body.session_id or str(uuid.uuid4())
-    history, snapshots = await asyncio.gather(
-        asyncio.to_thread(get_session_messages, session_id),
-        asyncio.to_thread(get_recent_mood, 7),
-    )
+async def _companion_sse(
+    session_id: str,
+    message: str,
+    history: list[dict],
+    snapshots: list[dict],
+    *,
+    pcm_data: bytes | None = None,
+    image_bytes: bytes | None = None,
+    image_mime: str | None = None,
+    user_content: str,
+    user_source: str,
+    audio_id: int | None = None,
+    image_id: int | None = None,
+) -> StreamingResponse:
     token_q: queue.Queue[str | None] = queue.Queue()
 
-    async def generate():
+    async def generate() -> AsyncIterator[str]:
         loop = asyncio.get_event_loop()
         future = loop.run_in_executor(
-            None, companion_agent_sync,
-            body.message, history, snapshots, token_q,
+            None,
+            _agent.companion_agent_sync,
+            message,
+            history,
+            snapshots,
+            token_q,
+            pcm_data,
+            image_bytes,
+            image_mime,
         )
         full_parts: list[str] = []
+        deadline = time.monotonic() + 180
         while True:
+            if time.monotonic() > deadline:
+                yield f"data: {json.dumps({'error': 'Companion response timed out'})}\n\n"
+                return
             try:
                 token = token_q.get(timeout=0.05)
             except queue.Empty:
+                if future.done():
+                    break
                 await asyncio.sleep(0)
                 continue
             if token is None:
@@ -257,27 +281,102 @@ async def companion_chat(body: CompanionBody) -> StreamingResponse:
             full_parts.append(token)
             yield f"data: {json.dumps({'token': token})}\n\n"
 
-        result = await future
+        try:
+            result = await asyncio.wait_for(asyncio.shield(future), timeout=30)
+        except asyncio.TimeoutError:
+            yield f"data: {json.dumps({'error': 'Companion agent did not finish'})}\n\n"
+            return
         reply = "".join(full_parts) or result.get("reply", "")
         if result.get("error"):
             yield f"data: {json.dumps({'error': result['error']})}\n\n"
             return
 
         user_id = await asyncio.to_thread(
-            save_entry, "companion", "user", body.message, "text", session_id
+            save_entry,
+            "companion",
+            "user",
+            user_content,
+            user_source,
+            session_id,
+            audio_id,
+            image_id,
         )
         await asyncio.to_thread(
             save_entry, "companion", "assistant", reply, "text", session_id
         )
-        asyncio.create_task(_tag_entry(user_id, body.message))
+        if user_source == "text" and user_content.strip():
+            asyncio.create_task(_tag_entry(user_id, user_content))
         asyncio.create_task(_sync_corpus())
 
         yield f"data: {json.dumps({'done': True, 'session_id': session_id, 'reply': reply})}\n\n"
 
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    return StreamingResponse(generate(), media_type="text/event-stream", headers=_SSE_HEADERS)
+
+
+# ── /api/companion/chat ───────────────────────────────────────────────────────
+
+@app.post("/api/companion/chat")
+async def companion_chat(request: Request) -> StreamingResponse:
+    """SSE companion chat. JSON body, or multipart with optional image file."""
+    content_type = request.headers.get("content-type", "")
+    image_bytes: bytes | None = None
+    image_mime: str | None = None
+    image_id: int | None = None
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        message = str(form.get("message") or "").strip()
+        if not message:
+            message = "What do you notice in this photo?"
+        session_id = str(form.get("session_id") or "") or str(uuid.uuid4())
+        upload = form.get("file")
+        if upload:
+            image_bytes = await upload.read()
+            image_mime = upload.content_type or "image/jpeg"
+            if image_mime not in _ALLOWED_IMAGE_TYPES:
+                raise HTTPException(status_code=415, detail=f"Unsupported image type: {image_mime}")
+            if len(image_bytes) > _MAX_IMAGE_BYTES:
+                raise HTTPException(status_code=413, detail="Image too large (max 10 MB)")
+            ext = image_mime.split("/")[-1].replace("jpeg", "jpg")
+            unique_name = f"{uuid.uuid4().hex}.{ext}"
+            (IMAGE_DIR / unique_name).write_bytes(image_bytes)
+            image_id = await asyncio.to_thread(
+                save_image_file, unique_name, image_mime, len(image_bytes)
+            )
+            entry_id = await asyncio.to_thread(
+                save_entry,
+                "companion",
+                "user",
+                message.strip(),
+                "image",
+                session_id,
+                None,
+                image_id,
+            )
+            if message.strip():
+                asyncio.create_task(_tag_entry(entry_id, message))
+    else:
+        try:
+            body = CompanionBody.model_validate(await request.json())
+        except ValidationError:
+            raise HTTPException(status_code=422, detail="Invalid request body")
+        message = body.message
+        session_id = body.session_id or str(uuid.uuid4())
+
+    history, snapshots = await asyncio.gather(
+        asyncio.to_thread(get_session_messages, session_id),
+        asyncio.to_thread(get_recent_mood, 7),
+    )
+    return await _companion_sse(
+        session_id,
+        message,
+        history,
+        snapshots,
+        image_bytes=image_bytes,
+        image_mime=image_mime,
+        user_content=message,
+        user_source="image" if image_id else "text",
+        image_id=image_id,
     )
 
 
@@ -306,48 +405,15 @@ async def companion_voice(
         asyncio.to_thread(get_session_messages, sid),
         asyncio.to_thread(get_recent_mood, 7),
     )
-    token_q: queue.Queue[str | None] = queue.Queue()
-
-    async def generate():
-        loop = asyncio.get_event_loop()
-        future = loop.run_in_executor(
-            None, companion_agent_sync,
-            "", history, snapshots, token_q, pcm_data,
-        )
-        full_parts: list[str] = []
-        while True:
-            try:
-                token = token_q.get(timeout=0.05)
-            except queue.Empty:
-                await asyncio.sleep(0)
-                continue
-            if token is None:
-                break
-            if token.startswith("\x00TOOL:") and token.endswith("\x00"):
-                yield f"data: {json.dumps({'tool_call': token[6:-1]})}\n\n"
-                continue
-            full_parts.append(token)
-            yield f"data: {json.dumps({'token': token})}\n\n"
-
-        result = await future
-        reply = "".join(full_parts) or result.get("reply", "")
-        if result.get("error"):
-            yield f"data: {json.dumps({'error': result['error']})}\n\n"
-            return
-
-        user_id = await asyncio.to_thread(
-            save_entry, "companion", "user", "", "voice", sid, audio_id
-        )
-        await asyncio.to_thread(save_entry, "companion", "assistant", reply, "text", sid)
-        asyncio.create_task(_tag_entry(user_id, ""))
-        asyncio.create_task(_sync_corpus())
-
-        yield f"data: {json.dumps({'done': True, 'session_id': sid, 'reply': reply})}\n\n"
-
-    return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    return await _companion_sse(
+        sid,
+        "",
+        history,
+        snapshots,
+        pcm_data=pcm_data,
+        user_content="",
+        user_source="voice",
+        audio_id=audio_id,
     )
 
 
@@ -365,31 +431,25 @@ async def journal(body: JournalBody) -> dict:
 
 @app.get("/api/reflect/open")
 async def reflect_open() -> StreamingResponse:
-    def _step(msg: str) -> str:
-        return f"data: {json.dumps({'step': msg})}\n\n"
-
     async def generate():
-        yield _step("Reading your recent entries…")
+        yield f"data: {json.dumps({'step': 'Reading your recent entries…'})}\n\n"
         await asyncio.sleep(0)
 
-        snapshots, last_reflect = await asyncio.gather(
-            asyncio.to_thread(get_recent_mood, 14),
-            asyncio.to_thread(get_last_reflect_summary),
-        )
+        snapshots = await asyncio.to_thread(get_recent_mood, 14)
         if not snapshots:
             payload = {
                 "greeting": "I haven't seen many entries yet — keep journaling and I'll have more to reflect on.",
-                "topics": [{"label": "Something else", "question": "Something else on my mind", "rag_query": "", "type": "free"}],
+                "topics": [{"label": "Something else", "question": "Something else on my mind", "rag_query": "", "type": "just_chat"}],
             }
             yield f"data: {json.dumps({'result': payload})}\n\n"
             return
 
-        yield _step("Finding what stands out…")
+        yield f"data: {json.dumps({'step': 'Finding what stands out…'})}\n\n"
         await asyncio.sleep(0)
 
         result = await asyncio.to_thread(reflect_open_sync, snapshots)
 
-        yield _step("Putting it together…")
+        yield f"data: {json.dumps({'step': 'Putting it together…'})}\n\n"
         await asyncio.sleep(0)
 
         if result.get("error"):
@@ -399,9 +459,7 @@ async def reflect_open() -> StreamingResponse:
         yield f"data: {json.dumps({'result': result})}\n\n"
 
     return StreamingResponse(
-        generate(),
-        media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        generate(), media_type="text/event-stream", headers=_SSE_HEADERS
     )
 
 
@@ -431,32 +489,20 @@ async def upload_image(
     entry_id = await asyncio.to_thread(
         save_entry, mode, "user", note.strip(), "image", session_id, None, image_id
     )
-    asyncio.create_task(_tag_entry(entry_id, note)) if note.strip() else None
+    if note.strip():
+        asyncio.create_task(_tag_entry(entry_id, note))
     asyncio.create_task(_sync_corpus())
 
     return {"entry_id": entry_id, "image_id": image_id, "saved": True}
 
 
 @app.get("/api/image/{image_id}/file")
-async def get_image_file(image_id: int) -> StreamingResponse:
+async def get_image_file(image_id: int) -> FileResponse:
     """Serve the raw image bytes for display in the UI."""
-    from .db import _conn as _db_conn
-    with _db_conn() as c:
-        row = c.execute(
-            "SELECT filename, mime_type FROM image_files WHERE id=?", (image_id,)
-        ).fetchone()
+    row = await asyncio.to_thread(get_image_file_row, image_id)
     if not row:
         raise HTTPException(status_code=404, detail="Image not found")
-    path = IMAGE_DIR / row["filename"]
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Image file missing on disk")
-
-    def _iter():
-        with open(path, "rb") as f:
-            while chunk := f.read(65536):
-                yield chunk
-
-    return StreamingResponse(_iter(), media_type=row["mime_type"])
+    return FileResponse(IMAGE_DIR / row["filename"], media_type=row["mime_type"])
 
 
 # ── /api/voice (save only) ────────────────────────────────────────────────────
@@ -494,12 +540,11 @@ async def stats() -> dict:
     return await asyncio.to_thread(get_stats)
 
 
-import time as _time
 _narrative_cache: dict = {"text": "", "expires": 0.0}
 
 @app.get("/api/insights/narrative")
 async def insights_narrative() -> dict:
-    now = _time.time()
+    now = time.time()
     if _narrative_cache["text"] and now < _narrative_cache["expires"]:
         return {"narrative": _narrative_cache["text"]}
     stats_data = await asyncio.to_thread(get_stats)
@@ -513,13 +558,10 @@ async def insights_narrative() -> dict:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 async def _tag_entry(entry_id: int, text: str) -> None:
-    try:
-        result = await asyncio.to_thread(extract_emotion_sync, text)
-        if not result.get("error"):
-            await asyncio.to_thread(
-                save_mood, entry_id,
-                result["valence"], result["intensity"],
-                result["category"], result["sub_tags"], result.get("raw", ""),
-            )
-    except Exception:
-        pass
+    result = await asyncio.to_thread(extract_emotion_sync, text)
+    if not result.get("error"):
+        await asyncio.to_thread(
+            save_mood, entry_id,
+            result["valence"], result["intensity"],
+            result["category"], result["sub_tags"], result.get("raw", ""),
+        )

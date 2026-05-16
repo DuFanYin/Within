@@ -48,7 +48,9 @@ Understanding Within means understanding how a mostly-async server runs mostly-s
 
 The companion is the richest path. Opening the screen calls `GET /api/reflect/open`, which streams progress steps over SSE and ends with a greeting plus suggested topics. Topic selection is mostly client-side: structured topics send a prefixed message into the same chat pipeline as free text.
 
-Each chat turn is `POST /api/companion/chat` (text) or `POST /api/companion/voice` (audio). Both stream SSE events: `token` for assistant text, `tool_call` when the agent searches entries or mood stats, `done` with `session_id` and full `reply`, or `error`. The client should persist `session_id` across turns; the server loads prior messages for that session from SQLite.
+Each chat turn is `POST /api/companion/chat` (JSON text, or **multipart** with optional image + message), or `POST /api/companion/voice` (audio). All three stream SSE events: `token` for assistant text, `tool_call` when the agent searches entries or mood stats, `done` with `session_id` and full `reply`, or `error`. The client should persist `session_id` across turns; the server loads prior messages for that session from SQLite.
+
+With an image, the server saves the file, embeds it in the user turn as base64 multimodal content, and runs the same agent loop (tools may run before the streamed reply).
 
 When a turn finishes, the server saves user and assistant rows (`mode=companion`), then asynchronously tags mood on the user message and re-exports corpus files.
 
@@ -118,7 +120,7 @@ When entries gain usable text, `export_corpus_incremental` in `app/corpus.py` wr
 
 At **`cactus_init`** (first chat model load), Cactus indexes whatever `.txt` files already sit in `corpus/`. Search at runtime goes through `rag_query` on that in-process index.
 
-**Critical limitation:** files created after startup are written to disk but are **not** added to the live index until the process restarts (unless you implement hot updates with `cactus_index_add`). Companion search can miss very recent entries until then. This is called out in `app/corpus.py` and is the main operational caveat for RAG.
+**Index refresh:** after `export_corpus_incremental`, `_sync_corpus` calls `refresh_corpus_index_sync()` in `app/engine.py`. If any `corpus/*.txt` is newer than `index.bin`, the server reloads the Gemma handle with the corpus directory so search picks up new exports—no full process restart. Refresh is skipped if another thread holds the model lock (e.g. companion inference in progress); the next sync retries. Very new entries can still lag until export + a successful refresh.
 
 ---
 
@@ -157,7 +159,7 @@ Other LLM tasks—mood extraction, daily summaries, tone lines, image captions, 
 
 **Non-clinical.** Prompts position the companion as a journal friend, not a clinician. Mood tags exist to power UI and light analytics, not diagnosis.
 
-**Explicit non-goals today:** multi-user hosting, cloud sync, live RAG index updates without restart, and graceful Cactus teardown on shutdown.
+**Explicit non-goals today:** multi-user hosting, cloud sync, incremental `cactus_index_add` without reload, and graceful Cactus teardown on shutdown.
 
 ---
 
@@ -175,7 +177,7 @@ When you need to change behavior, start here:
 - **`app/db.py`** — schema, queries, archiver mode list.
 - **`static/js/reflect.js`** — companion UI, SSE client, session cache.
 - **`static/js/journal.js`**, **`recording.js`** — journal capture.
-- **`test/test_*.py`** — behavioral contracts for API and pipelines.
+- **`test/test_*.py`**, **`test/e2e/`** — fast HTTP/DB/unit tests; optional e2e with real model (one inference per test).
 
 ---
 
@@ -183,6 +185,8 @@ When you need to change behavior, start here:
 
 **JSON:** `GET /`, `POST /api/warmup`, `POST /api/journal`, `POST /api/voice`, `POST /api/image`, `GET /api/history`, `GET /api/stats`, `GET /api/insights/narrative`, `GET /api/image/{id}/file`.
 
-**SSE:** `POST /api/companion/chat`, `POST /api/companion/voice`, `GET /api/reflect/open`.
+**SSE:** `POST /api/companion/chat` (JSON or multipart + image), `POST /api/companion/voice`, `GET /api/reflect/open`.
+
+**Dev-only (tests):** `POST /api/dev/sync-corpus`, `process-pending-audio`, `process-pending-images`, `archive-summaries` — run background pipeline steps once without waiting on lifespan timers.
 
 SSE lines are `data: <json>\n\n`. Companion streams use `token`, `tool_call`, `done`, `error`. Reflect open adds `step` and `result`.
