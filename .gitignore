@@ -10,8 +10,9 @@ third_party/cactus/
 .env
 .env.local
 
-# Local SQLite (journal + moods); created at runtime.
-data/
+# Local SQLite (journal + moods); directory tracked via data/.gitkeep.
+data/*
+!data/.gitkeep
 
 # Cactus RAG index cache next to corpus text; rebuilt on init.
 corpus/data.bin
@@ -26,4 +27,4 @@ lib/*.so
 
 .DS_Store
 
-doc/
+local/
