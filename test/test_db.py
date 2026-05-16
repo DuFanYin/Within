@@ -272,3 +272,80 @@ def test_get_mood_stats_for_agent_counts():
     result = db.get_mood_stats_for_agent()
     assert result["category_counts"].get("stress", 0) >= 1
     assert result["total_entries"] >= 1
+
+
+# ── daily summary archiver ────────────────────────────────────────────────────
+
+def _set_entry_day(entry_id: int, day: str) -> None:
+    conn = sqlite3.connect(str(db._DB_PATH))
+    conn.execute(
+        "UPDATE journal_entries SET created_at=? WHERE id=?",
+        (f"{day}T15:00:00Z", entry_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def test_get_days_needing_summary_includes_companion():
+    from datetime import datetime, timedelta, timezone
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    eid = db.save_entry("companion", "user", "had a rough day")
+    _set_entry_day(eid, yesterday)
+    assert yesterday in db.get_days_needing_summary()
+
+
+def test_get_days_needing_summary_includes_legacy_chat():
+    from datetime import datetime, timedelta, timezone
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    eid = db.save_entry("chat", "user", "legacy chat message")
+    _set_entry_day(eid, yesterday)
+    assert yesterday in db.get_days_needing_summary()
+
+
+def test_get_days_needing_summary_excludes_after_summary_saved():
+    from datetime import datetime, timedelta, timezone
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    eid = db.save_entry("companion", "user", "content for summary")
+    _set_entry_day(eid, yesterday)
+    db.save_summary(yesterday, "You reflected on a lot.")
+    assert yesterday not in db.get_days_needing_summary()
+
+
+def test_get_days_needing_summary_skips_empty_content():
+    from datetime import datetime, timedelta, timezone
+    yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+    eid = db.save_entry("companion", "user", "", source="voice")
+    _set_entry_day(eid, yesterday)
+    assert yesterday not in db.get_days_needing_summary()
+
+
+def test_get_days_needing_summary_excludes_today():
+    from datetime import datetime, timezone
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    eid = db.save_entry("companion", "user", "still today")
+    _set_entry_day(eid, today)
+    assert today not in db.get_days_needing_summary()
+
+
+def test_get_day_chat_messages_merges_modes():
+    from datetime import datetime, timedelta, timezone
+    day = (datetime.now(timezone.utc) - timedelta(days=2)).strftime("%Y-%m-%d")
+    e1 = db.save_entry("chat", "user", "older chat")
+    e2 = db.save_entry("companion", "user", "newer companion")
+    _set_entry_day(e1, day)
+    _set_entry_day(e2, day)
+    assert db.get_day_chat_messages(day) == ["older chat", "newer companion"]
+
+
+def test_save_summary_uses_companion_mode():
+    from datetime import datetime, timedelta, timezone
+    day = (datetime.now(timezone.utc) - timedelta(days=3)).strftime("%Y-%m-%d")
+    db.save_summary(day, "End of day reflection.")
+    conn = sqlite3.connect(str(db._DB_PATH))
+    row = conn.execute(
+        "SELECT mode, role, content FROM journal_entries WHERE role='summary'"
+    ).fetchone()
+    conn.close()
+    assert row[0] == "companion"
+    assert row[1] == "summary"
+    assert row[2] == "End of day reflection."

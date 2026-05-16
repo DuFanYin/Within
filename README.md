@@ -42,11 +42,11 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8765
 
 `sys_setup.sh` checks `third_party/cactus`, `libcactus`, and installs **`requirements.txt`** into **`.venv`**.
 
-Open **http://127.0.0.1:8765/** (not `Within.html` in the repo root).
+Open **http://127.0.0.1:8765/**.
 
 ## 4. Optional: demo journal data (`seed.py`)
 
-Loads about a month of fake journal/chat/mood rows into **`data/journal.db`** so History and Insights have something to show. **Wipes** existing `journal_entries` and `mood_snapshots` each run (safe to re-run).
+Loads about a month of fake journal/companion/mood rows into **`data/journal.db`** so History and Insights have something to show. **Wipes** existing `journal_entries` and `mood_snapshots` each run (safe to re-run).
 
 From the repo root, with the app venv active (after `./sys_setup.sh`):
 

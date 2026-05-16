@@ -5,11 +5,14 @@ DB file: {app_root}/data/journal.db
 
 import json
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 _DB_PATH: Path | None = None
+
+# Modes whose user turns are rolled into end-of-day summaries (archiver).
+_SUMMARY_CONVERSATION_MODES = ("chat", "companion", "reflect")
 
 
 def _db_path() -> Path:
@@ -311,34 +314,48 @@ def get_corpus_entries(since_id: int = 0) -> list[dict[str, Any]]:
 
 def get_days_needing_summary() -> list[str]:
     """
-    Return dates (YYYY-MM-DD) that have user chat messages but no summary yet,
-    and are strictly before today.
+    Return dates (YYYY-MM-DD) that have conversational user messages (chat,
+    companion, or legacy reflect) with non-empty content but no summary yet,
+    strictly before today (UTC).
     """
-    today = datetime.utcnow().strftime("%Y-%m-%d")
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    mode_placeholders = ",".join("?" * len(_SUMMARY_CONVERSATION_MODES))
     with _conn() as c:
-        rows = c.execute("""
-            SELECT DISTINCT substr(created_at,1,10) as day
+        rows = c.execute(
+            f"""
+            SELECT DISTINCT substr(created_at, 1, 10) AS day
             FROM journal_entries
-            WHERE mode='chat' AND role='user'
-              AND substr(created_at,1,10) < ?
-              AND substr(created_at,1,10) NOT IN (
-                  SELECT substr(created_at,1,10) FROM journal_entries
-                  WHERE mode='chat' AND role='summary'
+            WHERE mode IN ({mode_placeholders})
+              AND role = 'user'
+              AND trim(content) != ''
+              AND substr(created_at, 1, 10) < ?
+              AND substr(created_at, 1, 10) NOT IN (
+                  SELECT substr(created_at, 1, 10)
+                  FROM journal_entries
+                  WHERE role = 'summary'
               )
             ORDER BY day
-        """, (today,)).fetchall()
+            """,
+            (*_SUMMARY_CONVERSATION_MODES, today),
+        ).fetchall()
     return [r["day"] for r in rows]
 
 
 def get_day_chat_messages(day: str) -> list[str]:
-    """Return all user chat messages for a given day (YYYY-MM-DD), oldest first."""
+    """Return non-empty user messages for a day from conversational modes, oldest first."""
+    mode_placeholders = ",".join("?" * len(_SUMMARY_CONVERSATION_MODES))
     with _conn() as c:
-        rows = c.execute("""
+        rows = c.execute(
+            f"""
             SELECT content FROM journal_entries
-            WHERE mode='chat' AND role='user'
-              AND substr(created_at,1,10) = ?
+            WHERE mode IN ({mode_placeholders})
+              AND role = 'user'
+              AND trim(content) != ''
+              AND substr(created_at, 1, 10) = ?
             ORDER BY id
-        """, (day,)).fetchall()
+            """,
+            (*_SUMMARY_CONVERSATION_MODES, day),
+        ).fetchall()
     return [r["content"] for r in rows]
 
 
@@ -348,7 +365,7 @@ def save_summary(day: str, summary_text: str) -> int:
     with _conn() as c:
         cur = c.execute(
             "INSERT INTO journal_entries(created_at, mode, role, content, source) VALUES (?,?,?,?,?)",
-            (timestamp, "chat", "summary", summary_text, "text"),
+            (timestamp, "companion", "summary", summary_text, "text"),
         )
         return cur.lastrowid  # type: ignore[return-value]
 
