@@ -8,18 +8,7 @@ import re
 from typing import Any
 
 from .engine import _base_options, _run_complete, rag_query
-
-_REFLECT_OPEN_SYSTEM = (
-    "You are a warm, perceptive journaling companion. "
-    "The user just opened their Reflect space. Write ONE greeting sentence — "
-    "personal, human, max 20 words. "
-    "You are given 1-3 recent journal snippets and optionally what they said last time in Reflect. "
-    "Reference something *specific* from the snippets — a feeling, a situation, a word they used. "
-    "If you have a last session snippet, weave it in naturally. "
-    "Do NOT list topics. Do NOT say 'I noticed' or 'I see'. Do NOT use words like 'patterns' or 'entries'. "
-    "Sound like a friend who remembered, not a therapist who analysed. "
-    "Output only the single sentence, nothing else."
-)
+from .prompts import REFLECT_OPEN_SYSTEM
 
 
 # ── Insight decision layer ────────────────────────────────────────────────────
@@ -212,7 +201,7 @@ def reflect_open_sync(snapshots: list[dict]) -> dict[str, Any]:
         user_content += f"\n\n{last_hint}"
 
     messages = [
-        {"role": "system", "content": _REFLECT_OPEN_SYSTEM},
+        {"role": "system", "content": REFLECT_OPEN_SYSTEM},
         {"role": "user", "content": user_content},
     ]
     options = {**_base_options(), "temperature": 0.75, "max_tokens": 50}

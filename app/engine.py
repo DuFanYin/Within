@@ -230,12 +230,12 @@ def warmup_sync() -> None:
     global _WARMUP_DONE
     if _WARMUP_DONE:
         return
-    from .agent import _COMPANION_SYSTEM
+    from .prompts import COMPANION_SYSTEM
 
     # Must not call _get_model() while holding _lock — _get_model acquires the same lock on init.
     cactus_complete, _, _, model = _get_model()
     messages = [
-        {"role": "system", "content": _COMPANION_SYSTEM},
+        {"role": "system", "content": COMPANION_SYSTEM},
         {"role": "user", "content": "Hello"},
     ]
     options = {**_base_options(), "max_tokens": 1}

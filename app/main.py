@@ -8,6 +8,7 @@ Start from app root:
 import asyncio
 import json
 import os
+from functools import partial
 import queue
 import time
 import shutil
@@ -224,6 +225,10 @@ async def dev_archive_summaries() -> dict:
 class CompanionBody(BaseModel):
     message: str = Field(..., min_length=1, max_length=4000)
     session_id: str | None = None
+    topic_label: str | None = None
+    topic_question: str | None = None
+    topic_type: str | None = None
+    open_topic: bool = False
 
 
 class JournalBody(BaseModel):
@@ -244,6 +249,10 @@ async def _companion_sse(
     user_source: str,
     audio_id: int | None = None,
     image_id: int | None = None,
+    topic_label: str | None = None,
+    topic_question: str | None = None,
+    topic_type: str | None = None,
+    open_topic: bool = False,
 ) -> StreamingResponse:
     token_q: queue.Queue[str | None] = queue.Queue()
 
@@ -251,14 +260,20 @@ async def _companion_sse(
         loop = asyncio.get_event_loop()
         future = loop.run_in_executor(
             None,
-            _agent.companion_agent_sync,
-            message,
-            history,
-            snapshots,
-            token_q,
-            pcm_data,
-            image_bytes,
-            image_mime,
+            partial(
+                _agent.companion_agent_sync,
+                message,
+                history,
+                snapshots,
+                token_q,
+                pcm_data,
+                image_bytes,
+                image_mime,
+                topic_label=topic_label,
+                topic_question=topic_question,
+                topic_type=topic_type,
+                open_topic=open_topic,
+            ),
         )
         full_parts: list[str] = []
         deadline = time.monotonic() + 180
@@ -329,12 +344,18 @@ async def companion_chat(request: Request) -> StreamingResponse:
     image_mime: str | None = None
     image_id: int | None = None
 
+    topic_label: str | None = None
+    topic_question: str | None = None
+    topic_type: str | None = None
+    open_topic = False
+
     if "multipart/form-data" in content_type:
         form = await request.form()
         message = str(form.get("message") or "").strip()
         if not message:
             message = "What do you notice in this photo?"
         session_id = str(form.get("session_id") or "") or str(uuid.uuid4())
+        stored_user = message
         upload = form.get("file")
         if upload:
             image_bytes = await upload.read()
@@ -368,6 +389,15 @@ async def companion_chat(request: Request) -> StreamingResponse:
             raise HTTPException(status_code=422, detail="Invalid request body")
         message = body.message
         session_id = body.session_id or str(uuid.uuid4())
+        topic_label = body.topic_label
+        topic_question = body.topic_question
+        topic_type = body.topic_type
+        open_topic = body.open_topic
+        stored_user = (
+            f"Opened topic: {topic_label}"
+            if open_topic and topic_label
+            else message
+        )
 
     history, snapshots = await asyncio.gather(
         asyncio.to_thread(get_session_messages, session_id),
@@ -380,9 +410,13 @@ async def companion_chat(request: Request) -> StreamingResponse:
         snapshots,
         image_bytes=image_bytes,
         image_mime=image_mime,
-        user_content=message,
+        user_content=stored_user,
         user_source="image" if image_id else "text",
         image_id=image_id,
+        topic_label=topic_label,
+        topic_question=topic_question,
+        topic_type=topic_type,
+        open_topic=open_topic,
     )
 
 

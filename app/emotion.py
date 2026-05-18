@@ -8,6 +8,13 @@ import json
 from typing import Any
 
 from .engine import _base_options, _run_complete
+from .prompts import (
+    DAILY_SUMMARY_SYSTEM,
+    EMOTION_EXTRACT_SYSTEM,
+    IMAGE_CAPTION_SYSTEM,
+    INSIGHT_NARRATIVE_SYSTEM,
+    TONE_SUMMARY_SYSTEM,
+)
 
 _VALID_CATEGORIES = {"positive", "stress", "anxiety", "low_mood", "anger", "social"}
 
@@ -20,23 +27,6 @@ _CATEGORY_SUB_TAGS = {
     "social": {"lonely", "overlooked", "ashamed", "jealous", "comparison_anxiety"},
 }
 
-_EXTRACT_SYSTEM = (
-    "You are an emotion analysis system. "
-    "Given a journal entry, respond with ONLY valid JSON in this exact format:\n"
-    '{"valence": <float -1.0 to 1.0>, "intensity": <float 0.0 to 1.0>, '
-    '"category": <one of the six categories below>, "sub_tags": [<1-3 tags from that category>]}\n\n'
-    "category must be exactly one of: positive, stress, anxiety, low_mood, anger, social\n\n"
-    "sub_tags must be chosen ONLY from the list for the chosen category:\n"
-    "- positive: happy, content, relaxed, excited, accomplished\n"
-    "- stress: busy, exhausted, overwhelmed, time_crunched, drained\n"
-    "- anxiety: worried, tense, uneasy, out_of_control, future_anxiety\n"
-    "- low_mood: sad, empty, helpless, lost, unmotivated\n"
-    "- anger: angry, irritable, unfair, offended, suppressed_anger\n"
-    "- social: lonely, overlooked, ashamed, jealous, comparison_anxiety\n\n"
-    "No explanation, no markdown, just the JSON object."
-)
-
-
 def extract_emotion_sync(text: str) -> dict[str, Any]:
     """
     Extract structured emotion using the two-level category system.
@@ -44,7 +34,7 @@ def extract_emotion_sync(text: str) -> dict[str, Any]:
     Retries once on schema failure.
     """
     messages = [
-        {"role": "system", "content": _EXTRACT_SYSTEM},
+        {"role": "system", "content": EMOTION_EXTRACT_SYSTEM},
         {"role": "user", "content": text},
     ]
     options = {**_base_options(), "temperature": 0.1, "top_k": 1, "max_tokens": 100}
@@ -80,16 +70,6 @@ def extract_emotion_sync(text: str) -> dict[str, Any]:
     return {"valence": None, "intensity": None, "category": None, "sub_tags": [], "raw": "", "error": "parse_failed"}
 
 
-_IMAGE_CAPTION_SYSTEM = (
-    "You are a gentle journaling companion helping a user build emotional memories. "
-    "The user has attached a photo to their journal. "
-    "Write a short, warm description (2-3 sentences) of what this image likely represents as an emotional anchor — "
-    "the mood, setting, or feeling it might evoke. "
-    "Do not invent facts. If the image is abstract or unclear, describe the general atmosphere. "
-    "No bullet points. No clinical language."
-)
-
-
 def image_caption_sync(image_path: str, mime_type: str = "image/jpeg") -> str:
     """
     Generate a short emotional/contextual caption for an image.
@@ -103,7 +83,7 @@ def image_caption_sync(image_path: str, mime_type: str = "image/jpeg") -> str:
         return ""
 
     messages = [
-        {"role": "system", "content": _IMAGE_CAPTION_SYSTEM},
+        {"role": "system", "content": IMAGE_CAPTION_SYSTEM},
         {
             "role": "user",
             "content": [
@@ -120,38 +100,18 @@ def image_caption_sync(image_path: str, mime_type: str = "image/jpeg") -> str:
     return result.get("reply", "").strip()
 
 
-_TONE_SYSTEM = (
-    "You are an assistant that analyzes the expressive quality of spoken transcripts. "
-    "Given a transcript, write ONE short paragraph (2-4 sentences) describing HOW the person spoke — "
-    "not what they said, but the tone, pace, and emotional texture: "
-    "e.g. hesitations, fatigue, urgency, emotional weight, uncertainty, warmth. "
-    "Be observational and gentle. No bullet points. No clinical language."
-)
-
-
 def tone_summary_sync(transcript: str) -> str:
     """
     Generate a tone/expressiveness summary for a voice transcript.
     Returns a short paragraph describing how the person spoke, or empty string on failure.
     """
     messages = [
-        {"role": "system", "content": _TONE_SYSTEM},
+        {"role": "system", "content": TONE_SUMMARY_SYSTEM},
         {"role": "user", "content": transcript},
     ]
     options = {**_base_options(), "temperature": 0.5, "max_tokens": 150}
     result = _run_complete(messages, options)
     return result.get("reply", "").strip()
-
-
-_NARRATIVE_SYSTEM = (
-    "You are a warm, perceptive journaling companion writing a brief weekly reflection for the user. "
-    "You are given structured mood data: entry counts, dominant emotional categories, valence trends, and frequent tags. "
-    "Write exactly 3 sentences in second person (You…). "
-    "Sentence 1: what you noticed about their week (entry volume + dominant emotion). "
-    "Sentence 2: one specific detail — a tag that kept appearing, a mood shift, or a pattern. "
-    "Sentence 3: something gently forward-looking or affirming — not advice, just warmth. "
-    "Do not use bullet points, headers, or lists. No clinical language. Sound like a thoughtful friend."
-)
 
 
 def insight_narrative_sync(stats: dict) -> str:
@@ -199,7 +159,7 @@ def insight_narrative_sync(stats: dict) -> str:
     summary = "\n".join(l for l in summary_lines if l)
 
     messages = [
-        {"role": "system", "content": _NARRATIVE_SYSTEM},
+        {"role": "system", "content": INSIGHT_NARRATIVE_SYSTEM},
         {"role": "user", "content": summary},
     ]
     options = {**_base_options(), "temperature": 0.7, "max_tokens": 120}
@@ -213,20 +173,8 @@ def summarize_sync(day: str, user_messages: list[str]) -> str:
     Returns the summary string, or an empty string on failure.
     """
     joined = "\n".join(f"- {m}" for m in user_messages)
-    system = {
-        "role": "system",
-        "content": (
-            "You are a gentle, reflective journaling companion. "
-            "Your role is to write a warm end-of-day summary for the user based on what they shared today. "
-            "Write in second person (e.g. 'You…'). "
-            "Be empathetic, non-judgmental, and thoughtful (5–8 sentences). "
-            "Focus on emotional themes and the overall feeling of the day, not just a list of events. "
-            "Synthesize and reflect — do not repeat every detail verbatim. "
-            "No bullet points."
-        ),
-    }
     messages = [
-        system,
+        {"role": "system", "content": DAILY_SUMMARY_SYSTEM},
         {"role": "user", "content": f"Here are the things I shared on {day}:\n{joined}\n\nWrite a summary of my emotional day."},
     ]
     options = {**_base_options(), "temperature": 0.6, "max_tokens": 350}

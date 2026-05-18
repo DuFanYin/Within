@@ -37,7 +37,10 @@ _ok() {
 
 usage() {
   echo "Within — verify third_party/cactus + libcactus, then app .venv + pip."
-  echo "  -h, --help   This message."
+  echo ""
+  echo "  source sys_setup.sh   Recommended: setup + activate .venv in current shell"
+  echo "  ./sys_setup.sh        Setup only (activation does not persist in this shell)"
+  echo "  -h, --help            This message."
   exit 0
 }
 
@@ -106,5 +109,17 @@ _sub "[app pip 2/2] Installing ${APP_ROOT}/requirements.txt"
 _ok "App requirements installed"
 
 _log_banner "DONE — all phases complete"
-_log_line "  source ${APP_ROOT}/.venv/bin/activate"
-_log_line "  cd ${APP_ROOT} && uvicorn app.main:app --reload --host 0.0.0.0 --port 8765"
+
+# Subshell 里 source 不会影响当前终端；用 source sys_setup.sh 才会在本 shell 激活。
+if [[ "${BASH_SOURCE[0]}" != "${0}" ]]; then
+  # shellcheck source=/dev/null
+  source "${APP_ROOT}/.venv/bin/activate"
+  _ok "Activated .venv in this shell ($(command -v python))"
+  _log_line "  cd ${APP_ROOT} && uvicorn app.main:app --reload --host 0.0.0.0 --port 8765"
+else
+  _log_line "  To activate in this shell, run:"
+  _log_line "    source ${APP_ROOT}/sys_setup.sh"
+  _log_line "  Or manually:"
+  _log_line "    source ${APP_ROOT}/.venv/bin/activate"
+  _log_line "    cd ${APP_ROOT} && uvicorn app.main:app --reload --host 0.0.0.0 --port 8765"
+fi

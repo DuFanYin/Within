@@ -21,31 +21,26 @@ from .engine import (
     rag_query,
 )
 from .handoff_intent import route_mode
+from .prompts import (
+    COMPANION_CRISIS_EXTRA,
+    COMPANION_SYSTEM,
+    COMPANION_TOPIC_ACTIVE,
+    COMPANION_TOPIC_JUST_CHAT,
+    COMPANION_TOPIC_OPEN,
+    COMPANION_TOOL_MOOD,
+    COMPANION_TOOL_SEARCH,
+    SKILLS_CLOUD_SYSTEM,
+)
 
-_COMPANION_SYSTEM = """\
-You are a warm, private companion for someone's emotion journal. Everything stays on their device.
-
-You have tools to search their past entries and check their mood patterns — use them when they'd
-help you give a more grounded, specific response. You don't need to use tools every turn.
-
-When you do reference past entries, be specific: quote or paraphrase what they wrote.
-When you don't have relevant history, just listen and respond warmly.
-
-Rules:
-- At most one question per turn. Zero questions is fine.
-- Never give advice unless directly asked.
-- Keep replies under 4 sentences.
-- Never diagnose or suggest clinical terms.
-- If they seem in crisis, gently mention professional support.
-- Sound like a thoughtful friend, not a therapist running a session.\
-"""
+# Re-export for engine warmup
+_COMPANION_SYSTEM = COMPANION_SYSTEM
 
 _COMPANION_TOOLS = json.dumps([
     {
         "type": "function",
         "function": {
             "name": "search_my_entries",
-            "description": "Search the user's past journal entries for relevant content. Use this to find specific moments, feelings, or events the user has written about.",
+            "description": COMPANION_TOOL_SEARCH,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -67,7 +62,7 @@ _COMPANION_TOOLS = json.dumps([
         "type": "function",
         "function": {
             "name": "get_mood_stats",
-            "description": "Get aggregated mood statistics for the user over recent days: category counts, most frequent emotional tags, and average valence.",
+            "description": COMPANION_TOOL_MOOD,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -83,10 +78,22 @@ _COMPANION_TOOLS = json.dumps([
     },
 ])
 
-_SKILLS_CLOUD_SYSTEM = """\
-You give brief, practical, non-clinical coping ideas (grounding, pacing, boundaries, sleep). \
-No diagnosis. At most one question. Under 4 sentences.\
-"""
+def _topic_system_extra(
+    *,
+    topic_label: str | None,
+    topic_question: str | None,
+    topic_type: str | None,
+    open_topic: bool,
+) -> str:
+    if topic_type == "just_chat":
+        return COMPANION_TOPIC_JUST_CHAT
+    if not topic_label and not topic_question:
+        return ""
+    label = topic_label or "General"
+    question = topic_question or label
+    if open_topic:
+        return COMPANION_TOPIC_OPEN.format(label=label, question=question)
+    return COMPANION_TOPIC_ACTIVE.format(label=label, question=question)
 
 
 def _mood_hint(snapshots: list[dict]) -> str:
@@ -167,6 +174,11 @@ def companion_agent_sync(
     pcm_data: bytes | None = None,
     image_bytes: bytes | None = None,
     image_mime: str | None = None,
+    *,
+    topic_label: str | None = None,
+    topic_question: str | None = None,
+    topic_type: str | None = None,
+    open_topic: bool = False,
 ) -> dict[str, Any]:
     """
     Single agentic loop for all companion conversation turns.
@@ -177,14 +189,15 @@ def companion_agent_sync(
     try:
         cactus_complete, _, cactus_get_last_error, _ = _get_model()
         cloud_on = cloud_handoff_enabled()
-        mode = route_mode(message, cloud_configured=cloud_on)
+        route_text = message if not open_topic else (topic_question or topic_label or message)
+        mode = route_mode(route_text, cloud_configured=cloud_on)
 
         if mode == "skills_cloud":
             return _skills_cloud_turn(
                 message, mood_snapshots, token_queue, cactus_complete, cactus_get_last_error,
             )
 
-        system_content = _COMPANION_SYSTEM
+        system_content = COMPANION_SYSTEM
         if mood_snapshots:
             from collections import Counter
             cat_counts: Counter = Counter(
@@ -206,7 +219,17 @@ def companion_agent_sync(
             if top_tags:
                 parts.append(f"top tags: {', '.join(top_tags)}")
             if parts:
-                system_content = f"{_COMPANION_SYSTEM}\n\n[Recent mood context — last 7 days]\n{'; '.join(parts)}"
+                system_content = f"{COMPANION_SYSTEM}\n\n[Recent mood context — last 7 days]\n{'; '.join(parts)}"
+
+        system_content += _topic_system_extra(
+            topic_label=topic_label,
+            topic_question=topic_question,
+            topic_type=topic_type,
+            open_topic=open_topic,
+        )
+
+        if mode == "crisis":
+            system_content += COMPANION_CRISIS_EXTRA
 
         messages: list[dict] = [{"role": "system", "content": system_content}]
         messages.extend(history)
@@ -217,7 +240,10 @@ def companion_agent_sync(
                 {"type": "text", "text": message or "What do you notice in this photo?"},
             ]
         else:
-            user_content = message
+            if open_topic:
+                user_content = "[User selected a reflection topic card — open the conversation.]"
+            else:
+                user_content = message
         messages.append({"role": "user", "content": user_content})
 
         handoff_off = {"auto_handoff": False}

@@ -1,87 +1,115 @@
 # Within: Local-First Emotional Memory with Gemma 4 and Cactus
 
-**Subtitle:** Your journal remembers back—multimodal Gemma on your machine, two models routed by intent.  
-**Tracks:** Cactus Special Technology (primary) · Impact — Digital Equity & Inclusivity · Main Track eligible
+**Subtitle:** Private reflection that turns text, voice, and photos into searchable emotional memory.  
+**Tracks:** Cactus Special Technology (primary) · Digital Equity & Inclusivity · Main Track eligible
 
 ---
 
 ## Abstract
 
-You can vent in a group chat or a side account and feel better for a minute. Those spaces are still built for an audience; fragments rarely become a pattern you can name. **Within** is a private emotion journal with a **Gemma 4** companion: write, speak, or photograph how you feel; see mood over time; ask questions grounded in **your** past entries—all on your machine via **Cactus**. One **google/gemma-4-E2B-it** handle powers chat, tools, streaming, multimodal voice and images, on-device **RAG**, and structured mood JSON. **Parakeet** turns saved journal audio into searchable memory. Optional **Cactus Cloud** (opt-in) may answer generic coping questions without sending your journal. No accounts. No telemetry.
+People already use side accounts, voice notes, and private dumps to release emotion. What they usually do not get is continuity: the ability to come back later and understand what keeps repeating. **Within** is a local-first emotion journal built with **Gemma 4** and **Cactus** that helps people capture how they feel, revisit their history, and ask grounded questions about their own past entries.
+
+The app runs on the user’s machine by default. One **google/gemma-4-E2B-it** handle powers streaming chat, function calling, multimodal voice and image input, on-device RAG, and structured mood JSON. **Parakeet** turns saved journal audio into searchable memory. Optional **Cactus Cloud** is available only for a narrow set of non-sensitive companion questions when the user enables it. No account. No telemetry. The journal stays private.
 
 ---
 
 ## The problem
 
-Emotional expression today is often semi-performative. Even “private” dumps imagine a reader; relief waits on replies. Stress gets released in pieces but not understood across weeks—deadline meetings, comparison, burnout never linked into something you can recognize.
+Emotional expression online often looks private, but it still happens under the pressure of an imagined audience. Even when nobody replies, the user is still performing, editing, or waiting for feedback. That makes it hard to turn scattered moments into understanding.
 
-That leaves out people who will not trust a cloud journal, anyone on unreliable networks, and people who think in **voice** more easily than in performative text—including introverts and older adults who do not live on social feeds. They still need a low-friction outlet that does not require likes to feel heard.
+This leaves out people who do not trust cloud products with sensitive thoughts, have unreliable internet, or think more naturally in voice than polished text. It also leaves out anyone who wants a calm, low-friction place to reflect without being watched.
 
-**Gemma for Good:** Within builds **emotional literacy** without an audience—not a new feed, but a local system that helps you name what keeps repeating. **Digital equity:** after a one-time model download, inference and your words stay on the device; the journal never uploads to a cloud LLM by default.
-
----
-
-## The product
-
-Within is a phone-layout **web app** (browser + local FastAPI today; same stack in a native shell later). Four tabs: **Journal**, **Companion**, **History**, **Insights**.
-
-**Journal** is capture-only—text, voice, or photo saves immediately with **no AI reply**, so you are not performing for a bot. **Companion** is where Gemma talks back: an opening greeting and topic cards grounded in recent mood, then chat with streaming replies. **History** and **Insights** turn weeks of private data into calendars, mood chips, and a short narrative over your stats.
-
-A typical loop: you log *“Three meetings before lunch… running on empty.”* Days later you open Companion and ask, *“Why have I felt so drained—is it mostly meetings?”* The agent calls **`search_my_entries`** (semantic search over your exports) and **`get_mood_stats`** (SQLite aggregates). The UI can show those tool steps; the streamed answer cites **your** wording—not a wellness template.
-
-**Two ways to use the microphone** (the core Cactus story): **Companion voice** is record → stop → **Send** → 16 kHz PCM straight into Gemma—live multimodal dialogue, no speech-to-text round trip. **Journal voice** auto-saves, then **Parakeet** transcribes in the background; Gemma tags mood and exports text into the corpus so that moment becomes **memory you can search later**. Same device, different intent.
-
-Opening Companion is **not** the same as ongoing chat: recent mood snapshots drive **rule-based topic cards**, then **`cactus_rag_query`** pulls snippets, then **one** short greeting completion. Every later turn runs the full agent (up to three tool rounds, then stream).
+The challenge prompt asked for a Gemma 4 project with real-world utility, grounded outputs, and meaningful impact. Within targets **Digital Equity & Inclusivity** by making emotional reflection accessible in a format that is private, local, and easy to use.
 
 ---
 
-## Gemma 4 + Cactus: one engine, routed work
+## What Within does
 
-All inference goes through **Cactus**—not separate cloud APIs for chat, embeddings, vision, and ASR.
+Within is a phone-layout web app with four core areas:
 
-| What you do | Cactus | Model |
-|-------------|--------|--------|
-| Companion text / live voice / images | `cactus_complete` (stream) | **Gemma 4 E2B-it** |
-| Search your journal (open + tools) | `cactus_rag_query` | Same Gemma handle |
-| Saved journal voice → text | `cactus_transcribe` → export | **Parakeet**, then Gemma |
-| Mood tags, captions, insights text | `cactus_complete` | Gemma 4 |
+- **Journal** for private capture without reply,
+- **Companion** for grounded conversation,
+- **History** for browsing past entries,
+- **Insights** for trends and mood patterns.
 
-**Gemma** loads with `cactus_init(weights, corpus_dir, cache_index=True)` over `corpus/*.txt` files exported from SQLite. **Parakeet** loads with `cactus_init(weights, None, False)`. When new entries are transcribed or captioned, exports update; the server can **re-init** the Gemma handle under a lock so RAG sees fresh text without restarting the app.
+The product intentionally separates two kinds of use. **Journal** is capture-first: text, voice, or photo saves immediately, and the app does not talk back. **Companion** is for reflection: it opens with a short greeting and topic suggestions based on recent mood history, then supports streaming conversation grounded in the user’s own entries.
 
-We **do not fine-tune**. We use **agentic retrieval** and prompting—the app path the challenge describes:
-
-- **Function calling** — Native tools JSON on `cactus_complete`; non-streaming tool rounds (~0.2 temperature), then a streamed reply (~0.7).
-- **Multimodal on E2B** — **Text** for journal and chat; **PCM audio-in** for companion turns; **images** in chat (base64) plus background **captions** on journal photos so pictures become searchable words later.
-- **Built-in RAG** — Personal history lives in flat `corpus/*.txt` files; `cactus_rag_query` runs in-process on the same handle—no separate embedding service. That is how Companion and Insights connect this week’s stress to last week’s entries.
-- **Structured mood** — Gemma returns JSON in six categories (`stress`, `anxiety`, `low_mood`, `anger`, `social`, `positive`) with validated sub-tags for History chips and charts.
-- **Warmup** — A minimal completion prefills the companion system prompt so the first real turn after load is responsive.
-
-**Why E2B is enough:** Journaling needs grounded recall and short, warm replies—not 30B chain-of-thought. On a laptop, E2B already runs multimodal voice-in, visible tool calls, RAG over weeks of entries, and reliable mood JSON. The edge model is small; the **system design** (RAG + tools + routing) makes it capable for this task.
+That separation matters. Some moments need to be recorded. Others need help connecting the dots.
 
 ---
 
-## Privacy, safety, and optional cloud
+## How Gemma 4 is used
 
-Sensitive work stays local by design. **Journal**, reflect open, mood extraction, and the insights narrative **never** use cloud LLMs.
+Within uses Gemma 4 as a routed system, not as a generic chatbot.
 
-For Companion only, with `CLOUD_HANDOFF=true`: **crisis** phrases are rule-detected and **always** stay on-device; **coping-style** questions (e.g. “how do I cope with stress?”) may send **only that question** plus a coarse mood label to **Cactus Cloud**—not session history or RAG snippets. If local confidence is low, Cactus **`auto_handoff`** may escalate, but your journal corpus does not leave the machine by default.
+| User need | Cactus path | Model |
+|---|---|---|
+| Companion text, voice, image chat | `cactus_complete` with streaming | Gemma 4 E2B-it |
+| Search personal memory | `cactus_rag_query` over exported journal text | Same Gemma handle |
+| Journal voice transcription | `cactus_transcribe` | Parakeet, then Gemma |
+| Mood tags, captions, insight text | `cactus_complete` | Gemma 4 E2B-it |
 
-Within is **non-clinical**—a journal friend, not a clinician. Tool steps are visible so grounding is inspectable, not a black box.
+Two things matter here.
+
+First, **Gemma 4 is truly multimodal in the product path**: the companion can reason over text, live voice, and images. Second, **answers are grounded**. The app can call `search_my_entries` and `get_mood_stats` so the model responds using the user’s own history instead of generic wellness language. The UI can even surface those tool steps, so the grounding is inspectable rather than implied.
+
+I did not fine-tune the model. The point of the project was to make the system design do the work: retrieval, structured outputs, background enrichment, and a UI that keeps the model honest.
 
 ---
 
-## What we built through
+## Why Cactus
 
-Shipping one Gemma handle for chat, RAG, vision, and JSON while keeping **SSE streaming** responsive meant running Cactus off the asyncio loop with a process-wide lock. The harder product problem was **two voice semantics** in one UX: live PCM dialogue versus Parakeet-backed durable memory. We also refused “fake” RAG—corpus export waits for transcripts and image captions so search does not invent text the user never had.
+Cactus is the right fit because this project needs one local-first runtime for chat, retrieval, multimodal input, and ASR. Within does not split those pieces across separate services. That keeps the architecture simpler and keeps sensitive data on-device by default.
 
-**Honest scope:** single-user web MVP, not an app-store binary yet; no multi-tenant hosting or cloud sync. The **intent-based routing** is what we would carry to mobile or wearable.
+The routing story is also part of the product. Here, “routing” means deciding whether a companion question stays local or can be handed off to cloud. Sensitive work stays on-device. Only a narrow set of generic coping questions can use **Cactus Cloud**, and even then the app sends only the current question plus a coarse mood label, not the user’s journal history.
+
+That makes the privacy story practical. The app still works offline or on weak networks, but it also has an escape hatch for non-sensitive questions when the user wants it.
+
+---
+
+## Architecture and implementation
+
+Within is a single FastAPI app with SQLite, background enrichment jobs, and a vanilla JS frontend. The hardest engineering problem was making blocking AI work fit cleanly inside an async web server.
+
+The key implementation choices were:
+
+- one shared Gemma handle for chat, retrieval, captions, mood extraction, and narratives,
+- a separate Parakeet path for journal transcription,
+- SSE streaming for companion replies so the user sees progress immediately,
+- delayed enrichment for voice and image entries so capture stays fast,
+- corpus export and refresh so new entries become searchable without a full restart.
+
+This is how the memory story becomes real. The companion does not invent long-term memory; it searches exported journal text, then uses that context to answer the user. That means the app can actually say things like “your stress tends to cluster around meetings” because it is grounded in the user’s own history.
+
+---
+
+## The hardest product problem
+
+The biggest UX challenge was supporting two different voice semantics in one app:
+
+- **Companion voice** is live conversation: audio goes directly into Gemma and the user gets a streamed reply.
+- **Journal voice** is durable memory: audio is saved first and transcribed in the background so it can be searched later.
+
+That split matters because not every spoken thought should become a conversation. Some moments should just be preserved.
+
+I also avoided fake retrieval. New transcripts and photo captions only enter the corpus after enrichment, so search reflects real user content rather than assumptions. That makes the system more trustworthy and the grounded replies more honest.
+
+---
+
+## Why this matters
+
+Within is designed to build emotional literacy, not diagnosis. It helps people notice patterns in their own words over time: stress after deadlines, loneliness after long gaps, or a good week worth remembering. That is a small but meaningful form of support, especially for people who are often missed by cloud-first, social, or highly performative tools.
+
+The combination of **local privacy**, **multimodal capture**, **agentic retrieval**, and **structured mood understanding** is what makes Gemma 4 useful here. The model is small enough to run locally, but the system around it turns it into something practical and humane.
 
 ---
 
 ## Conclusion
 
-Within shows **Gemma 4** and **Cactus** together for real use: multimodal capture, agentic search over your emotional history, and deliberate routing to **Parakeet** when voice must become durable, searchable memory. The win is simple and human—when your own past entries teach you that meetings and exhaustion keep returning, and you can name that pattern without uploading your inner life.
+Within shows Gemma 4 and Cactus as a real local-first product, not just a demo of model capability. It supports private capture, grounded reflection, searchable emotional memory, and optional handoff for non-sensitive questions when appropriate.
+
+The core idea is simple: people should be able to express how they feel without performing for an audience, and later come back to a system that helps them understand what keeps repeating. Within is my attempt to make that possible on the user’s own device.
 
 ---
 
-*Attach in Kaggle: public YouTube (≤3 min), GitHub, demo URL, cover image · Non-clinical · Gemma 4 E2B-it · Cactus · Parakeet*
+*Submission assets: public YouTube video, public code repository, live demo, and cover image.*

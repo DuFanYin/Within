@@ -45,7 +45,7 @@ function _loadCache() {
     _companionSid  = c.companionSid || null;
 
     const picker = log.querySelector('.reflect-topic-picker');
-    if (picker && !picker.classList.contains('reflect-topic-picker--locked')) {
+    if (picker && c.topicPicked && !picker.classList.contains('reflect-topic-picker--locked')) {
       picker.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
       picker.classList.add('reflect-topic-picker--locked');
     }
@@ -152,10 +152,11 @@ function _appendTopicPicker(topics) {
   wrap.id        = 'reflect-topic-picker';
   wrap.className = 'reflect-topic-picker';
 
-  topics.forEach((topic, i) => {
+  topics.forEach((topic) => {
     const btn = document.createElement('button');
+    btn.type = 'button';
     btn.className = 'reflect-topic-option';
-    btn.addEventListener('click', () => _pickTopic(topic, wrap, btn));
+    btn.dataset.topic = JSON.stringify(topic);
 
     const iconEl = document.createElement('div');
     iconEl.className = 'reflect-topic-icon';
@@ -188,9 +189,22 @@ function _appendTopicPicker(topics) {
   log.scrollTop = log.scrollHeight;
 }
 
+function _companionTopicPayload() {
+  if (!_activeTopic) return {};
+  if (_activeTopic.type === 'just_chat') {
+    return { topic_type: 'just_chat' };
+  }
+  return {
+    topic_label:    _activeTopic.label || null,
+    topic_question: _activeTopic.question || null,
+    topic_type:     _activeTopic.type || null,
+  };
+}
+
 function _pickTopic(topic, pickerEl, btnEl) {
   if (_topicPicked) return;
   _topicPicked = true;
+  _companionSid = null;
 
   pickerEl.querySelectorAll('.reflect-topic-option').forEach(b => b.disabled = true);
   if (btnEl) btnEl.classList.add('selected');
@@ -215,18 +229,21 @@ async function _agentOpen(topic) {
   const status = document.getElementById('reflect-chat-status');
   const input  = document.getElementById('reflect-input-wrap');
 
-  const seed = topic.question || topic.label;
-  const message = `[Context: ${topic.question || topic.label}]\n${seed}`;
-
   const bubble = _appendBubble('assistant', '');
   bubble.classList.add('bubble-streaming');
 
   try {
-    const sid = _companionSid || null;
     const res = await fetch('/api/companion/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, session_id: sid }),
+      body: JSON.stringify({
+        message: 'Please open this reflection topic.',
+        session_id: null,
+        topic_label: topic.label || null,
+        topic_question: topic.question || null,
+        topic_type: topic.type || null,
+        open_topic: true,
+      }),
     });
     if (!res.ok) throw new Error(res.statusText);
 
@@ -317,8 +334,7 @@ async function sendReflectChat() {
   clearReflectImage();
   clearReflectAudio();
 
-  const bubble = _appendBubble('assistant', '');
-  bubble.classList.add('bubble-streaming');
+  let bubble = null;
 
   try {
     if (hasAudio) {
@@ -330,6 +346,9 @@ async function sendReflectChat() {
       voiceRow.appendChild(voiceBubble);
       log.appendChild(voiceRow);
       log.scrollTop = log.scrollHeight;
+
+      bubble = _appendBubble('assistant', '');
+      bubble.classList.add('bubble-streaming');
 
       const fd = new FormData();
       fd.append('file', audioBlob, 'audio.webm');
@@ -357,6 +376,9 @@ async function sendReflectChat() {
       log.appendChild(imgRow);
       log.scrollTop = log.scrollHeight;
 
+      bubble = _appendBubble('assistant', '');
+      bubble.classList.add('bubble-streaming');
+
       const fd = new FormData();
       fd.append('file', imageFile, imageFile.name);
       fd.append('message', text || 'What do you notice in this photo?');
@@ -368,13 +390,16 @@ async function sendReflectChat() {
       if (out.sid) _companionSid = out.sid;
     } else {
       _appendBubble('user', text);
-      const message = _activeTopic && _activeTopic.type !== 'just_chat'
-        ? `[Context: ${_activeTopic.question}]\n${text}`
-        : text;
+      bubble = _appendBubble('assistant', '');
+      bubble.classList.add('bubble-streaming');
       const res = await fetch('/api/companion/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message, session_id: _companionSid }),
+        body: JSON.stringify({
+          message: text,
+          session_id: _companionSid,
+          ..._companionTopicPayload(),
+        }),
       });
       if (!res.ok) throw new Error(res.statusText);
       const out = await _streamInto(res, bubble, log, status);
@@ -382,9 +407,9 @@ async function sendReflectChat() {
     }
   } catch (err) {
     status.textContent = err.message;
-    bubble.remove();
+    if (bubble) bubble.closest('.bubble-row')?.remove();
   } finally {
-    bubble.classList.remove('bubble-streaming');
+    if (bubble) bubble.classList.remove('bubble-streaming');
     send.disabled = false;
     inputEl.focus();
     _saveCache();
@@ -465,6 +490,20 @@ function _appendBubble(role, text) {
 // ── keyboard ──────────────────────────────────────────────────────────────────
 
 document.addEventListener('DOMContentLoaded', () => {
+  const log = document.getElementById('reflect-chat-log');
+  if (log) {
+    log.addEventListener('click', (e) => {
+      const btn = e.target.closest('.reflect-topic-option');
+      if (!btn || btn.disabled || _topicPicked) return;
+      const picker = btn.closest('.reflect-topic-picker');
+      if (!picker || picker.classList.contains('reflect-topic-picker--locked')) return;
+      let topic;
+      try { topic = JSON.parse(btn.dataset.topic || ''); } catch { return; }
+      if (!topic || !topic.type) return;
+      _pickTopic(topic, picker, btn);
+    });
+  }
+
   const input = document.getElementById('reflect-chat-input');
   if (!input) return;
   input.addEventListener('keydown', e => {
